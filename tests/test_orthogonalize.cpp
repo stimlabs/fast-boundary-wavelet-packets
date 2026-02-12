@@ -1,5 +1,5 @@
-#include "matrix_build.h"
-#include "orthogonalize.h"
+#include "matrix_build.hpp"
+#include "orthogonalize.hpp"
 
 #include <cassert>
 #include <cmath>

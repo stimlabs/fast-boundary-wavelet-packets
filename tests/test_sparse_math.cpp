@@ -1,5 +1,5 @@
-#include "sparse_math.h"
-#include "wavelet.h"
+#include "sparse_math.hpp"
+#include "wavelet.hpp"
 
 #include <cassert>
 #include <cmath>

@@ -1,5 +1,5 @@
-#include "matrix_build.h"
-#include "sparse_math.h"
+#include "matrix_build.hpp"
+#include "sparse_math.hpp"
 
 #include <cassert>
 #include <cmath>

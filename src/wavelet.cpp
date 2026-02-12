@@ -1,4 +1,4 @@
-#include "wavelet.h"
+#include "wavelet.hpp"
 
 #include <cmath>
 #include <stdexcept>

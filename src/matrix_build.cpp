@@ -1,7 +1,7 @@
-#include "matrix_build.h"
+#include "matrix_build.hpp"
 
-#include "orthogonalize.h"
-#include "sparse_math.h"
+#include "orthogonalize.hpp"
+#include "sparse_math.hpp"
 
 torch::Tensor construct_a(
     Wavelet const& wavelet,

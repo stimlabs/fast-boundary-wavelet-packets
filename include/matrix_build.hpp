@@ -2,8 +2,8 @@
 
 #include <torch/torch.h>
 
-#include "orthogonalize.h"
-#include "wavelet.h"
+#include "orthogonalize.hpp"
+#include "wavelet.hpp"
 
 /// Build the raw analysis matrix A for a single decomposition level.
 /// Top length/2 rows: lowpass (dec_lo), bottom length/2 rows: highpass (dec_hi).

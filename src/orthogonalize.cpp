@@ -1,6 +1,6 @@
-#include "orthogonalize.h"
+#include "orthogonalize.hpp"
 
-#include "sparse_math.h"
+#include "sparse_math.hpp"
 
 #include <stdexcept>
 

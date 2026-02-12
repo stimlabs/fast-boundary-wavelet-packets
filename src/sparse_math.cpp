@@ -1,4 +1,4 @@
-#include "sparse_math.h"
+#include "sparse_math.hpp"
 
 static torch::TensorOptions sparse_opts(torch::Tensor const& t) {
     return torch::TensorOptions().dtype(t.dtype()).device(t.device());

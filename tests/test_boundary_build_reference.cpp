@@ -1,4 +1,4 @@
-#include "matrix_build.h"
+#include "matrix_build.hpp"
 
 #include <cassert>
 #include <fstream>
