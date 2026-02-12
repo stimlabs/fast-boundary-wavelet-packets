@@ -22,3 +22,9 @@ torch::Tensor sparse_replace_row(
     torch::Tensor const& matrix,
     int64_t row_index,
     torch::Tensor const& row);
+
+/// Repeat a sparse square block along the diagonal.
+/// Given a sparse [M, M] block and count k, returns a sparse [M*k, M*k] tensor.
+torch::Tensor block_diag_repeat(
+    torch::Tensor const& block,
+    int64_t count);

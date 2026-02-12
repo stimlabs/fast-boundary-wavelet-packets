@@ -92,3 +92,36 @@ torch::Tensor sparse_replace_row(
 
     return (result + addition).coalesce();
 }
+
+torch::Tensor block_diag_repeat(
+    torch::Tensor const& block,
+    int64_t count) {
+
+    auto block_c = block.coalesce();
+    int64_t const M = block_c.size(0);
+    auto src_indices = block_c.indices();   // [2, nnz]
+    auto src_values = block_c.values();     // [nnz]
+    int64_t const nnz = src_values.size(0);
+
+    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(block.device());
+
+    // Pre-allocate index/value tensors for all copies at once.
+    auto all_rows = torch::empty(nnz * count, long_opts);
+    auto all_cols = torch::empty(nnz * count, long_opts);
+    auto all_vals = torch::empty(nnz * count, sparse_opts(block));
+
+    auto src_rows = src_indices[0];
+    auto src_cols = src_indices[1];
+
+    for (int64_t i = 0; i < count; ++i) {
+        int64_t const offset = i * nnz;
+        int64_t const block_offset = i * M;
+        all_rows.slice(0, offset, offset + nnz).copy_(src_rows + block_offset);
+        all_cols.slice(0, offset, offset + nnz).copy_(src_cols + block_offset);
+        all_vals.slice(0, offset, offset + nnz).copy_(src_values);
+    }
+
+    int64_t const N = M * count;
+    return torch::sparse_coo_tensor(
+        torch::stack({all_rows, all_cols}), all_vals, {N, N}, sparse_opts(block));
+}
