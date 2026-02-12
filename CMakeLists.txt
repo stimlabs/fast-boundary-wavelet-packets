@@ -21,7 +21,7 @@ add_executable(check_build src/check_build.cpp)
 target_link_libraries(check_build ${TORCH_LIBRARIES})
 
 # ---------- Library ----------
-add_library(fbwp src/wavelet.cpp src/sparse_math.cpp src/matrix_build.cpp)
+add_library(fbwp src/wavelet.cpp src/sparse_math.cpp src/matrix_build.cpp src/orthogonalize.cpp)
 target_include_directories(fbwp PUBLIC include)
 target_link_libraries(fbwp ${TORCH_LIBRARIES})
 
@@ -46,3 +46,13 @@ target_link_libraries(test_matrix_build_reference fbwp)
 target_compile_definitions(test_matrix_build_reference PRIVATE
     TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 add_test(NAME test_matrix_build_reference COMMAND test_matrix_build_reference)
+
+add_executable(test_orthogonalize tests/test_orthogonalize.cpp)
+target_link_libraries(test_orthogonalize fbwp)
+add_test(NAME test_orthogonalize COMMAND test_orthogonalize)
+
+add_executable(test_boundary_build_reference tests/test_boundary_build_reference.cpp)
+target_link_libraries(test_boundary_build_reference fbwp)
+target_compile_definitions(test_boundary_build_reference PRIVATE
+    TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+add_test(NAME test_boundary_build_reference COMMAND test_boundary_build_reference)

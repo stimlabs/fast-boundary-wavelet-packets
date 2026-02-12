@@ -38,8 +38,8 @@ static void test_case(TestCase const& tc) {
     auto const w = make_wavelet(tc.wavelet);
     auto const opts = torch::TensorOptions().dtype(torch::kFloat64);
 
-    auto our_a = construct_a(w, tc.length, opts);
-    auto our_s = construct_s(w, tc.length, opts);
+    auto our_a = construct_boundary_a(w, tc.length, opts);
+    auto our_s = construct_boundary_s(w, tc.length, opts);
 
     assert(our_a.is_sparse());
     assert(our_s.is_sparse());
@@ -48,9 +48,9 @@ static void test_case(TestCase const& tc) {
     auto our_s_dense = our_s.to_dense();
 
     auto ref_a = load_tensor(
-        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_a.pt"));
+        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_boundary_a.pt"));
     auto ref_s = load_tensor(
-        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_s.pt"));
+        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_boundary_s.pt"));
 
     assert(our_a_dense.sizes() == ref_a.sizes());
     assert(our_s_dense.sizes() == ref_s.sizes());
@@ -60,12 +60,12 @@ static void test_case(TestCase const& tc) {
 
     if (diff_a > TOL) {
         std::cerr << "FAIL " << tc.wavelet << " len=" << tc.length
-                  << " A max diff = " << diff_a << std::endl;
+                  << " boundary A max diff = " << diff_a << std::endl;
         assert(false);
     }
     if (diff_s > TOL) {
         std::cerr << "FAIL " << tc.wavelet << " len=" << tc.length
-                  << " S max diff = " << diff_s << std::endl;
+                  << " boundary S max diff = " << diff_s << std::endl;
         assert(false);
     }
 
@@ -87,6 +87,6 @@ int main() {
         test_case(tc);
     }
 
-    std::cout << "All reference match tests passed." << std::endl;
+    std::cout << "All boundary build reference tests passed." << std::endl;
     return 0;
 }
