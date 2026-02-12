@@ -21,7 +21,7 @@ add_executable(check_build src/check_build.cpp)
 target_link_libraries(check_build ${TORCH_LIBRARIES})
 
 # ---------- Library ----------
-add_library(fbwp src/wavelet.cpp src/sparse_math.cpp)
+add_library(fbwp src/wavelet.cpp src/sparse_math.cpp src/matrix_build.cpp)
 target_include_directories(fbwp PUBLIC include)
 target_link_libraries(fbwp ${TORCH_LIBRARIES})
 
@@ -36,3 +36,7 @@ add_test(NAME test_wavelet COMMAND test_wavelet)
 add_executable(test_sparse_math tests/test_sparse_math.cpp)
 target_link_libraries(test_sparse_math fbwp)
 add_test(NAME test_sparse_math COMMAND test_sparse_math)
+
+add_executable(test_matrix_build tests/test_matrix_build.cpp)
+target_link_libraries(test_matrix_build fbwp)
+add_test(NAME test_matrix_build COMMAND test_matrix_build)
