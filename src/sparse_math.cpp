@@ -62,3 +62,33 @@ torch::Tensor construct_strided_conv_matrix(
 
     return torch::mm(selection_matrix, conv_matrix);
 }
+
+torch::Tensor sparse_replace_row(
+    torch::Tensor const& matrix,
+    int64_t row_index,
+    torch::Tensor const& row) {
+
+    int64_t const n = matrix.size(0);
+    auto const opts = sparse_opts(matrix);
+    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(matrix.device());
+
+    // Diagonal removal matrix: identity with 0 at row_index.
+    auto diag_idx = torch::arange(n, long_opts);
+    auto diag_vals = torch::ones(n, opts);
+    diag_vals[row_index] = 0.0;
+    auto removal = torch::sparse_coo_tensor(
+        torch::stack({diag_idx, diag_idx}), diag_vals, {n, n}, opts);
+
+    auto result = torch::mm(removal, matrix);
+
+    // Addition matrix: place the new row at row_index.
+    auto row_c = row.coalesce();
+    auto row_indices = row_c.indices();  // [2, nnz] with row dim all 0
+    auto shifted_indices = torch::stack({
+        row_indices[0] + row_index,
+        row_indices[1]});
+    auto addition = torch::sparse_coo_tensor(
+        shifted_indices, row_c.values(), matrix.sizes(), opts);
+
+    return (result + addition).coalesce();
+}

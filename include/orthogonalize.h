@@ -22,6 +22,12 @@ torch::Tensor orth_by_qr(
     torch::Tensor const& matrix,
     torch::Tensor const& boundary_rows);
 
+/// Replace boundary rows with Gram-Schmidt-orthonormalized versions.
+/// Classical Gram-Schmidt, fully sparse, sequential.
+torch::Tensor orth_by_gram_schmidt(
+    torch::Tensor const& matrix,
+    torch::Tensor const& boundary_rows);
+
 /// Top-level dispatch: find boundary rows, orthogonalize by method.
 torch::Tensor orthogonalize(
     torch::Tensor const& matrix,

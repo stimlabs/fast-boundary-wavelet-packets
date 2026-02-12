@@ -32,14 +32,16 @@ static std::string data_path(std::string const& filename) {
 struct TestCase {
     std::string wavelet;
     int64_t length;
+    OrthMethod method;
+    std::string method_tag;  // "qr" or "gs" for filename
 };
 
 static void test_case(TestCase const& tc) {
     auto const w = make_wavelet(tc.wavelet);
     auto const opts = torch::TensorOptions().dtype(torch::kFloat64);
 
-    auto our_a = construct_boundary_a(w, tc.length, opts);
-    auto our_s = construct_boundary_s(w, tc.length, opts);
+    auto our_a = construct_boundary_a(w, tc.length, opts, tc.method);
+    auto our_s = construct_boundary_s(w, tc.length, opts, tc.method);
 
     assert(our_a.is_sparse());
     assert(our_s.is_sparse());
@@ -48,9 +50,9 @@ static void test_case(TestCase const& tc) {
     auto our_s_dense = our_s.to_dense();
 
     auto ref_a = load_tensor(
-        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_boundary_a.pt"));
+        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_boundary_" + tc.method_tag + "_a.pt"));
     auto ref_s = load_tensor(
-        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_boundary_s.pt"));
+        data_path(tc.wavelet + "_" + std::to_string(tc.length) + "_boundary_" + tc.method_tag + "_s.pt"));
 
     assert(our_a_dense.sizes() == ref_a.sizes());
     assert(our_s_dense.sizes() == ref_s.sizes());
@@ -60,27 +62,35 @@ static void test_case(TestCase const& tc) {
 
     if (diff_a > TOL) {
         std::cerr << "FAIL " << tc.wavelet << " len=" << tc.length
+                  << " method=" << tc.method_tag
                   << " boundary A max diff = " << diff_a << std::endl;
         assert(false);
     }
     if (diff_s > TOL) {
         std::cerr << "FAIL " << tc.wavelet << " len=" << tc.length
+                  << " method=" << tc.method_tag
                   << " boundary S max diff = " << diff_s << std::endl;
         assert(false);
     }
 
     std::cout << "  " << tc.wavelet << " len=" << tc.length
+              << " method=" << tc.method_tag
               << " OK (A diff=" << diff_a << ", S diff=" << diff_s << ")"
               << std::endl;
 }
 
 int main() {
     std::vector<TestCase> const cases = {
-        {"haar", 8},
-        {"haar", 16},
-        {"db2", 8},
-        {"db2", 16},
-        {"db3", 16},
+        {"haar", 8, OrthMethod::qr, "qr"},
+        {"haar", 16, OrthMethod::qr, "qr"},
+        {"db2", 8, OrthMethod::qr, "qr"},
+        {"db2", 16, OrthMethod::qr, "qr"},
+        {"db3", 16, OrthMethod::qr, "qr"},
+        {"haar", 8, OrthMethod::gramschmidt, "gs"},
+        {"haar", 16, OrthMethod::gramschmidt, "gs"},
+        {"db2", 8, OrthMethod::gramschmidt, "gs"},
+        {"db2", 16, OrthMethod::gramschmidt, "gs"},
+        {"db3", 16, OrthMethod::gramschmidt, "gs"},
     };
 
     for (auto const& tc : cases) {

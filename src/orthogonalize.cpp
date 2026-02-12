@@ -1,5 +1,7 @@
 #include "orthogonalize.h"
 
+#include "sparse_math.h"
+
 #include <stdexcept>
 
 static torch::TensorOptions sparse_opts(torch::Tensor const& t) {
@@ -71,6 +73,68 @@ torch::Tensor orth_by_qr(
     return result.coalesce();
 }
 
+torch::Tensor orth_by_gram_schmidt(
+    torch::Tensor const& matrix,
+    torch::Tensor const& boundary_rows) {
+
+    if (boundary_rows.numel() == 0) {
+        return matrix;
+    }
+
+    int64_t const n = matrix.size(0);
+    auto const opts = sparse_opts(matrix);
+    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(matrix.device());
+
+    auto result = matrix;
+    std::vector<int64_t> done;
+
+    for (int64_t i = 0; i < boundary_rows.numel(); ++i) {
+        int64_t const row_idx = boundary_rows[i].item<int64_t>();
+
+        // Extract current row via sparse selection matrix -> [1, N]
+        auto sel_indices = torch::stack({
+            torch::zeros(1, long_opts),
+            torch::tensor({row_idx}, long_opts)});
+        auto selection = torch::sparse_coo_tensor(
+            sel_indices, torch::ones(1, opts), {1, n}, opts);
+        auto current_row = torch::mm(selection, result);  // sparse [1, N]
+
+        // Project out all previously done boundary rows.
+        auto sum = torch::sparse_coo_tensor(
+            torch::empty({2, 0}, long_opts),
+            torch::empty(0, opts),
+            {1, matrix.size(1)}, opts);
+
+        for (int64_t done_idx : done) {
+            // Extract done row
+            auto done_sel_indices = torch::stack({
+                torch::zeros(1, long_opts),
+                torch::tensor({done_idx}, long_opts)});
+            auto done_selection = torch::sparse_coo_tensor(
+                done_sel_indices, torch::ones(1, opts), {1, n}, opts);
+            auto done_row = torch::mm(done_selection, result);  // sparse [1, N]
+
+            // Inner product: current_row @ done_row.T -> sparse [1, 1]
+            auto ip = torch::mm(current_row, done_row.t()).coalesce();
+            double scalar = 0.0;
+            if (ip.values().numel() > 0) {
+                scalar = ip.values()[0].item<double>();
+            }
+            sum = (sum + scalar * done_row).coalesce();
+        }
+
+        // Orthogonalize and normalize.
+        auto orthogonal = (current_row.to_dense() - sum.to_dense()).to_sparse().coalesce();
+        auto length = torch::native_norm(orthogonal);
+        auto orthonormal = (orthogonal / length).coalesce();
+
+        result = sparse_replace_row(result, row_idx, orthonormal);
+        done.push_back(row_idx);
+    }
+
+    return result;
+}
+
 torch::Tensor orthogonalize(
     torch::Tensor const& matrix,
     int64_t filt_len,
@@ -86,8 +150,7 @@ torch::Tensor orthogonalize(
         case OrthMethod::qr:
             return orth_by_qr(matrix, boundary);
         case OrthMethod::gramschmidt:
-            throw std::runtime_error(
-                "Gram-Schmidt orthogonalization not yet implemented");
+            return orth_by_gram_schmidt(matrix, boundary);
     }
     throw std::logic_error("Invalid OrthMethod");
 }

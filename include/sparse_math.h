@@ -15,3 +15,10 @@ torch::Tensor construct_strided_conv_matrix(
     torch::Tensor const& filter,
     int64_t input_length,
     int64_t stride);
+
+/// Replace a single row in a sparse matrix. Returns a new sparse matrix.
+/// The row tensor must be sparse with shape [1, cols].
+torch::Tensor sparse_replace_row(
+    torch::Tensor const& matrix,
+    int64_t row_index,
+    torch::Tensor const& row);

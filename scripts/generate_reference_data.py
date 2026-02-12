@@ -34,13 +34,15 @@ def main():
         save_tensor(a, DATA_DIR / f"{wavelet}_{length}_a.pt")
         save_tensor(s, DATA_DIR / f"{wavelet}_{length}_s.pt")
         print(f"  {wavelet} length={length}: A{list(a.shape)}, S{list(s.shape)}")
-    print("Build boundary matrices (QR):")
-    for wavelet, length in MATRIX_BUILD_CASES:
-        ba = construct_boundary_a(wavelet, length, orthogonalization="qr", dtype=torch.float64)
-        bs = construct_boundary_s(wavelet, length, orthogonalization="qr", dtype=torch.float64)
-        save_tensor(ba, DATA_DIR / f"{wavelet}_{length}_boundary_a.pt")
-        save_tensor(bs, DATA_DIR / f"{wavelet}_{length}_boundary_s.pt")
-        print(f"  {wavelet} length={length}: boundary_A{list(ba.shape)}, boundary_S{list(bs.shape)}")
+    ORTH_METHODS = [("qr", "qr"), ("gramschmidt", "gs")]
+    for method_name, method_tag in ORTH_METHODS:
+        print(f"Build boundary matrices ({method_tag}):")
+        for wavelet, length in MATRIX_BUILD_CASES:
+            ba = construct_boundary_a(wavelet, length, orthogonalization=method_name, dtype=torch.float64)
+            bs = construct_boundary_s(wavelet, length, orthogonalization=method_name, dtype=torch.float64)
+            save_tensor(ba, DATA_DIR / f"{wavelet}_{length}_boundary_{method_tag}_a.pt")
+            save_tensor(bs, DATA_DIR / f"{wavelet}_{length}_boundary_{method_tag}_s.pt")
+            print(f"  {wavelet} length={length}: boundary_A{list(ba.shape)}, boundary_S{list(bs.shape)}")
     print("Done.")
 
 
