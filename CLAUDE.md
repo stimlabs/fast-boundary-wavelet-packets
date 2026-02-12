@@ -49,6 +49,10 @@ scripts/               # Python helper/comparison scripts
 reference/             # Cloned PyTorch-Wavelet-Toolbox (gitignored)
 ```
 
+## Code style
+
+- **East const**: `const` always goes after the type. Write `int const x`, `std::string const& name`, `char const*`, never `const int x` or `const std::string&`.
+
 ## Architecture
 
 ### Core mathematical model
