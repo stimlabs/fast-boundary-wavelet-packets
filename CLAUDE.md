@@ -1,75 +1,74 @@
-# fast-boundary-wavelet-packets
+# CLAUDE.md
 
-### Project in one sentence
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-C++ (LibTorch) implementation of the wavelet packet transform with special boundary filters, supporting QR and Gram–Schmidt orthogonalization.
+## What this project is
 
-### Reference implementation
+C++ (LibTorch) implementation of the wavelet packet transform with special boundary filters, supporting QR and Gram-Schmidt orthogonalization. Based on the Python [PyTorch-Wavelet-Toolbox](https://github.com/v0lta/PyTorch-Wavelet-Toolbox) reference implementation (cloned into `reference/`).
 
-Based on the Python PyTorch library [PyTorch-Wavelet-Toolbox](https://github.com/v0lta/PyTorch-Wavelet-Toolbox) that implements the wavelet packet transform with special boundary filters and orthogonalization.
+This is a focused reimplementation — only the boundary-filter wavelet packet transform is in scope.
 
-### Purpose and scope
+## Build and test commands
 
-Provide a focused, high-performance implementation of the wavelet packet transform for finite inputs that uses special boundary filters and preserves perfect reconstruction.
-The code is implemented in C++ using LibTorch and exposes two orthogonalization methods: `"qr"` (dense QR) and `"gramschmidt"` (sparse/in-place Gram–Schmidt).
+Requires `TORCH_DIR` pointing to `<libtorch>/share/cmake/Torch`:
 
-This is a focused implementation. Other features of the reference library are intentionally not included.
+```bash
+# Full build
+make build TORCH_DIR=~/libs/libtorch/share/cmake/Torch
 
-### Makefile targets
+# Run all tests
+make test
 
-| Target                 | Description                                              |
-|------------------------|----------------------------------------------------------|
-| `make setup`           | Clone reference repo and install Python requirements     |
-| `make setup-reference` | Clone/update the reference repo into `reference/`        |
-| `make setup-python`    | `pip install -r requirements.txt` (requires active venv) |
-| `make build`           | CMake configure + build (requires `TORCH_DIR`)           |
-| `make test`            | Run C++ tests via CTest                                  |
-| `make clean`           | Remove the `build/` directory                            |
+# Run a single CTest by name
+ctest --test-dir build --output-on-failure -R <test_name>
 
-`make setup-python` requires an active virtual environment. It checks for the `VIRTUAL_ENV` environment variable or a local `.venv/` directory. If neither is found, it exits with an error and instructions to create one.
-
-### Project layout
-
-```
-.
-├── CLAUDE.md
-├── CMakeLists.txt         # C++ build configuration
-├── Makefile               # Top-level task runner
-├── requirements.txt       # Python dependencies
-├── include/               # Public C++ headers
-├── src/                   # C++ implementation
-├── tests/                 # C++ tests
-├── scripts/               # Python scripts
-├── reference/             # Cloned reference repo
-└── build/                 # CMake build directory
+# Clean rebuild
+make clean && make build TORCH_DIR=~/libs/libtorch/share/cmake/Torch
 ```
 
-## Implementation Details
+The `TORCH_DIR` can also be set as an environment variable. Build type defaults to Release; override with `BUILD_TYPE=Debug`.
+
+### Python setup (for reference comparison scripts)
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+make setup          # clones reference repo + pip install
+```
+
+`make setup-python` requires an active virtualenv (`VIRTUAL_ENV` env var or `.venv/` directory).
+
+## Project layout
+
+```
+CMakeLists.txt         # C++ build — C++17, links LibTorch
+Makefile               # Task runner (setup, build, test, clean)
+include/               # Public C++ headers
+src/                   # C++ implementation
+tests/                 # C++ tests
+scripts/               # Python helper/comparison scripts
+reference/             # Cloned PyTorch-Wavelet-Toolbox (gitignored)
+```
+
+## Architecture
 
 ### Core mathematical model
 
-The transform is treated as a linear operator:
-
-* Analysis: `c = A x`
-* Synthesis: `x = S c`
-* Requirement: `S · A ≈ I` (perfect reconstruction)
-
-Interior rows of `A` use standard wavelet filters.
-Boundary rows are replaced by short filters whose coefficients are computed so that the full operator still satisfies the reconstruction and orthogonality constraints.
-
-This becomes a **matrix orthogonalization problem** at the boundaries.
+The transform is a linear operator: analysis `c = A x`, synthesis `x = S c`, with the requirement `S * A = I` (perfect reconstruction). Interior rows of `A` use standard wavelet filters; boundary rows use short, specially constructed filters to avoid edge artifacts while preserving signal length.
 
 ### Orthogonalization modes
 
-Used only for constructing valid boundary filter rows.
+Used only for constructing valid boundary filter rows:
 
-* `"qr"`: Dense QR factorization. More numerically robust, higher memory use.
-* `"gramschmidt"`: Sparse / in-place Gram–Schmidt. More memory efficient, potentially less stable.
+- `"qr"`: Dense QR factorization. More numerically robust, higher memory.
+- `"gramschmidt"`: Sparse/in-place Gram-Schmidt. More memory efficient, potentially less stable.
 
-Both must produce operators satisfying reconstruction constraints within numerical tolerance.
+### Key design differences from reference
+
+- The wavelet packet tree is **not built lazily** — all levels up to `max_level` are computed in one pass.
+- Subbands at each level are tiled into a structured representation with the same spatial extent as the input, enabling stacking along a scale dimension.
 
 ## Success criteria
 
-* Forward and inverse transforms must satisfy `S · A ≈ I` within acceptable numerical tolerance.
-* Computed coefficients at each level must **match the reference Python implementation** within configurable tolerance for both `float32` and `float64`.
-* Both orthogonalization modes (`"qr"` and `"gramschmidt"`) must produce outputs consistent with the above.
+- Forward/inverse transforms satisfy `S * A ~ I` within numerical tolerance.
+- Coefficients match the reference Python implementation for both `float32` and `float64`.
+- Both orthogonalization modes produce consistent results.
