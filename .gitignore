@@ -1,0 +1,15 @@
+# Reference implementation
+reference/
+
+# C++ build artifacts
+build/
+cmake-build-*/
+compile_commands.json
+
+# Python virtual environment
+.venv/
+__pycache__/
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,11 @@
+# C++ build artifacts
+build/
+cmake-build-*/
+
+# Python virtual environment
+.venv/
+__pycache__/
+
+# IDE
+.vscode/
+.idea/
