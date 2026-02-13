@@ -23,13 +23,12 @@ static void test_wpt_forward(WPTestCase const& tc) {
     auto signal = load_tensor(data_path(tag + "_signal.pt"));
     assert(signal.size(0) == tc.length);
 
-    auto const w = make_wavelet(tc.wavelet);
-    auto result = wavelet_packet_forward_1d(signal, w, tc.max_level, tc.method);
+    auto result = wavelet_packet_forward_1d(signal, tc.wavelet, -1, tc.max_level, tc.method);
 
     for (int64_t level = 1; level <= tc.max_level; ++level) {
         auto ref = load_tensor(data_path(
             tag + "_" + tc.method_tag + "_l" + std::to_string(level) + ".pt"));
-        auto ours = result.coeffs.select(0, level - 1);  // 1-D: [max_level, N]
+        auto ours = result.select(0, level - 1);  // 1-D: [max_level, N] → [N]
 
         assert(ours.sizes() == ref.sizes());
         auto diff = (ours - ref).abs().max().item<double>();
@@ -48,10 +47,9 @@ static void test_wpt_roundtrip(WPTestCase const& tc) {
         std::to_string(tc.length) + "_L" + std::to_string(tc.max_level);
 
     auto signal = load_tensor(data_path(tag + "_signal.pt"));
-    auto const w = make_wavelet(tc.wavelet);
-
-    auto fwd = wavelet_packet_forward_1d(signal, w, tc.max_level, tc.method);
-    auto reconstructed = wavelet_packet_inverse_1d(fwd, w, tc.method);
+    auto fwd = wavelet_packet_forward_1d(signal, tc.wavelet, -1, tc.max_level, tc.method);
+    auto leaf = fwd.select(0, tc.max_level - 1);  // [N]
+    auto reconstructed = wavelet_packet_inverse_1d(leaf, tc.wavelet, -1, tc.max_level, tc.method);
 
     auto diff = (reconstructed - signal).abs().max().item<double>();
     if (diff > TOL) {

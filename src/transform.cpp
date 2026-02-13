@@ -2,6 +2,7 @@
 
 #include "matrix_build.hpp"
 #include "sparse_math.hpp"
+#include "wavelet.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -24,11 +25,30 @@ static torch::Tensor permute_subbands(
     return result;
 }
 
+int64_t compute_max_level(int64_t signal_length, int64_t dec_len) {
+    int64_t L = 0;
+    int64_t divisor = 1;
+    while (signal_length % (divisor * 2) == 0 && signal_length / divisor >= dec_len) {
+        ++L;
+        divisor *= 2;
+    }
+    return L;
+}
+
 static void validate_packet_args(
     int64_t N,
-    int64_t max_level,
+    int64_t& max_level,
     int64_t dec_len) {
 
+    if (max_level == -1) {
+        max_level = compute_max_level(N, dec_len);
+        if (max_level < 1) {
+            throw std::invalid_argument(
+                "Cannot auto-compute max_level: signal length " + std::to_string(N) +
+                " with filter length " + std::to_string(dec_len) + " yields level 0");
+        }
+        return;
+    }
     if (max_level < 1) {
         throw std::invalid_argument("max_level must be >= 1, got " + std::to_string(max_level));
     }
@@ -48,22 +68,46 @@ static void validate_packet_args(
     }
 }
 
-WaveletPacketResult wavelet_packet_forward_1d(
-    torch::Tensor const& signal,
-    Wavelet const& wavelet,
+/// Resolve a possibly-negative dim index and validate it.
+static int64_t resolve_dim(int64_t dim, int64_t ndim) {
+    int64_t const resolved = dim < 0 ? dim + ndim : dim;
+    if (resolved < 0 || resolved >= ndim) {
+        throw std::invalid_argument(
+            "dim " + std::to_string(dim) + " out of range for tensor with " +
+            std::to_string(ndim) + " dimensions");
+    }
+    return resolved;
+}
+
+torch::Tensor wavelet_packet_forward_1d(
+    torch::Tensor const& input_signal,
+    std::string const& wavelet_name,
+    int64_t dim,
     int64_t max_level,
-    OrthMethod method) {
+    OrthMethod orth_method) {
 
-    bool const was_1d = signal.dim() == 1;
-    auto x = was_1d ? signal.unsqueeze(0) : signal;  // [batch, N]
-    int64_t const N = x.size(1);
+    auto const w = make_wavelet(wavelet_name);
 
-    validate_packet_args(N, max_level, wavelet.dec_len());
+    // Resolve dim and move analyzed dimension to last position.
+    int64_t const ndim = input_signal.dim();
+    if (ndim < 1) {
+        throw std::invalid_argument("input_signal must have at least 1 dimension");
+    }
+    int64_t const resolved_dim = resolve_dim(dim, ndim);
 
-    auto const opts = torch::TensorOptions().dtype(x.dtype()).device(x.device());
+    auto x = torch::movedim(input_signal, resolved_dim, -1);  // [..., N]
+    auto const orig_shape = x.sizes().vec();                    // shape with N at the end
+    int64_t const N = orig_shape.back();
+
+    validate_packet_args(N, max_level, w.dec_len());
+
+    // Flatten leading dims into a single batch dim → [batch, N]
+    auto flat = x.reshape({-1, N});
+
+    auto const opts = torch::TensorOptions().dtype(flat.dtype()).device(flat.device());
 
     // Working state: [N, batch] for efficient sparse mm
-    auto subbands = x.t().contiguous();
+    auto subbands = flat.t().contiguous();
 
     // Collect each level's output
     std::vector<torch::Tensor> level_outputs;
@@ -73,7 +117,7 @@ WaveletPacketResult wavelet_packet_forward_1d(
         int64_t const M = N / (1LL << (level - 1));  // subband size before split
         int64_t const k = 1LL << (level - 1);        // number of subbands
 
-        auto A_block = construct_boundary_a(wavelet, M, opts, method);
+        auto A_block = construct_boundary_a(w, M, opts, orth_method);
         if (k > 1) {
             A_block = block_diag_repeat(A_block, k);
         }
@@ -90,29 +134,51 @@ WaveletPacketResult wavelet_packet_forward_1d(
     // Stack levels → [batch, max_level, N]
     auto coeffs = torch::stack(level_outputs, /*dim=*/1);
 
-    if (was_1d) {
-        coeffs = coeffs.squeeze(0);  // [max_level, N]
-    }
+    // Unflatten batch dims back to original shape
+    // orig_shape is [..., N], we want [..., max_level, N]
+    std::vector<int64_t> result_shape(orig_shape.begin(), orig_shape.end() - 1);
+    result_shape.push_back(max_level);
+    result_shape.push_back(N);
+    auto result = coeffs.reshape(result_shape);  // [..., max_level, N]
 
-    return WaveletPacketResult{coeffs, max_level, N};
+    // Move max_level and N dims back to resolved_dim position
+    // Currently: [..., max_level, N] where max_level is at ndim-1 and N is at ndim
+    // Target: level dim at resolved_dim, analyzed dim at resolved_dim+1
+    result = torch::movedim(result, std::vector<int64_t>{ndim - 1, ndim},
+                                    std::vector<int64_t>{resolved_dim, resolved_dim + 1});
+
+    return result;
 }
 
 torch::Tensor wavelet_packet_inverse_1d(
     torch::Tensor const& leaf_coeffs,
-    Wavelet const& wavelet,
+    std::string const& wavelet_name,
+    int64_t dim,
     int64_t max_level,
-    OrthMethod method) {
+    OrthMethod orth_method) {
 
-    bool const was_1d = leaf_coeffs.dim() == 1;
-    auto x = was_1d ? leaf_coeffs.unsqueeze(0) : leaf_coeffs;  // [batch, N]
-    int64_t const N = x.size(1);
+    auto const w = make_wavelet(wavelet_name);
 
-    validate_packet_args(N, max_level, wavelet.dec_len());
+    // Resolve dim and move analyzed dimension to last position.
+    int64_t const ndim = leaf_coeffs.dim();
+    if (ndim < 1) {
+        throw std::invalid_argument("leaf_coeffs must have at least 1 dimension");
+    }
+    int64_t const resolved_dim = resolve_dim(dim, ndim);
 
-    auto const opts = torch::TensorOptions().dtype(x.dtype()).device(x.device());
+    auto x = torch::movedim(leaf_coeffs, resolved_dim, -1);  // [..., N]
+    auto const orig_shape = x.sizes().vec();
+    int64_t const N = orig_shape.back();
+
+    validate_packet_args(N, max_level, w.dec_len());
+
+    // Flatten leading dims into a single batch dim → [batch, N]
+    auto flat = x.reshape({-1, N});
+
+    auto const opts = torch::TensorOptions().dtype(flat.dtype()).device(flat.device());
 
     // Working state: [N, batch]
-    auto subbands = x.t().contiguous();
+    auto subbands = flat.t().contiguous();
 
     // Input is in frequency order; convert to natural for the first iteration.
     {
@@ -128,7 +194,7 @@ torch::Tensor wavelet_packet_inverse_1d(
         int64_t const M = N / (1LL << (level - 1));
         int64_t const k = 1LL << (level - 1);
 
-        auto S_block = construct_boundary_s(wavelet, M, opts, method);
+        auto S_block = construct_boundary_s(w, M, opts, orth_method);
         if (k > 1) {
             S_block = block_diag_repeat(S_block, k);
         }
@@ -138,27 +204,15 @@ torch::Tensor wavelet_packet_inverse_1d(
 
     auto result = subbands.t().contiguous();  // [batch, N]
 
-    if (was_1d) {
-        result = result.squeeze(0);  // [N]
-    }
+    // Unflatten batch dims back to original shape
+    std::vector<int64_t> result_shape(orig_shape.begin(), orig_shape.end() - 1);
+    result_shape.push_back(N);
+    result = result.reshape(result_shape);  // [..., N]
+
+    // Move N dim back to resolved_dim position
+    result = torch::movedim(result, -1, resolved_dim);
+
     return result;
-}
-
-torch::Tensor wavelet_packet_inverse_1d(
-    WaveletPacketResult const& result,
-    Wavelet const& wavelet,
-    OrthMethod method) {
-
-    // Extract leaf level (last level)
-    auto leaf = result.coeffs;
-    if (leaf.dim() == 3) {
-        // [batch, max_level, N] → take last level
-        leaf = leaf.select(1, result.max_level - 1);  // [batch, N]
-    } else {
-        // [max_level, N] → take last level
-        leaf = leaf.select(0, result.max_level - 1);  // [N]
-    }
-    return wavelet_packet_inverse_1d(leaf, wavelet, result.max_level, method);
 }
 
 torch::Tensor natural_to_freq_permutation(int64_t level) {
