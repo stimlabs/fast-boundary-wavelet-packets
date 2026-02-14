@@ -1,5 +1,6 @@
 #include "transform.hpp"
 #include "sparse_math.hpp"
+#include "wavelet.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -86,14 +87,14 @@ static void test_shapes_1d() {
     {
         auto signal = torch::randn({N}, torch::kFloat64);
 
-        auto fwd = wavelet_packet_forward_1d(signal, "haar", -1, L);
+        auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("haar"), -1, L);
         assert(fwd.dim() == 2);
         assert(fwd.size(0) == L);
         assert(fwd.size(1) == N);
 
         auto leaf = fwd.select(0, L - 1);  // [N]
         assert(leaf.dim() == 1);
-        auto rec = wavelet_packet_inverse_1d(leaf, "haar", -1, L);
+        auto rec = wavelet_packet_inverse_1d(leaf, make_wavelet("haar"), -1, L);
         assert(rec.dim() == 1);
         assert(rec.size(0) == N);
     }
@@ -103,7 +104,7 @@ static void test_shapes_1d() {
         int64_t const B = 5;
         auto signal = torch::randn({B, N}, torch::kFloat64);
 
-        auto fwd = wavelet_packet_forward_1d(signal, "haar", -1, L);
+        auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("haar"), -1, L);
         assert(fwd.dim() == 3);
         assert(fwd.size(0) == B);
         assert(fwd.size(1) == L);
@@ -112,7 +113,7 @@ static void test_shapes_1d() {
         auto leaf = fwd.select(1, L - 1);  // [batch, N]
         assert(leaf.dim() == 2);
         assert(leaf.size(0) == B);
-        auto rec = wavelet_packet_inverse_1d(leaf, "haar", -1, L);
+        auto rec = wavelet_packet_inverse_1d(leaf, make_wavelet("haar"), -1, L);
         assert(rec.dim() == 2);
         assert(rec.size(0) == B);
         assert(rec.size(1) == N);
@@ -123,7 +124,7 @@ static void test_shapes_1d() {
         int64_t const B1 = 3, B2 = 4;
         auto signal = torch::randn({B1, B2, N}, torch::kFloat64);
 
-        auto fwd = wavelet_packet_forward_1d(signal, "haar", -1, L);
+        auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("haar"), -1, L);
         assert(fwd.dim() == 4);
         assert(fwd.size(0) == B1);
         assert(fwd.size(1) == B2);
@@ -132,7 +133,7 @@ static void test_shapes_1d() {
 
         auto leaf = fwd.select(2, L - 1);  // [B1, B2, N]
         assert(leaf.dim() == 3);
-        auto rec = wavelet_packet_inverse_1d(leaf, "haar", -1, L);
+        auto rec = wavelet_packet_inverse_1d(leaf, make_wavelet("haar"), -1, L);
         assert(rec.dim() == 3);
         assert(rec.sizes() == signal.sizes());
 
@@ -150,14 +151,14 @@ static void test_auto_max_level() {
 
     // Auto-compute should give L=4 for haar with N=16
     auto signal = torch::randn({N}, torch::kFloat64);
-    auto fwd = wavelet_packet_forward_1d(signal, "haar");
+    auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("haar"));
     assert(fwd.dim() == 2);
     assert(fwd.size(0) == 4);  // compute_max_level(16, 2) == 4
     assert(fwd.size(1) == N);
 
     // Inverse with auto max_level
     auto leaf = fwd.select(0, 3);  // leaf level
-    auto rec = wavelet_packet_inverse_1d(leaf, "haar");
+    auto rec = wavelet_packet_inverse_1d(leaf, make_wavelet("haar"));
     auto diff = (rec - signal).abs().max().item<double>();
     assert(diff < TOL);
 
@@ -172,7 +173,7 @@ static void test_dim_selection_2d() {
 
     auto signal = torch::randn({N, C}, torch::kFloat64);
 
-    auto fwd = wavelet_packet_forward_1d(signal, "haar", 0, L);
+    auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("haar"), 0, L);
     assert(fwd.dim() == 3);
     assert(fwd.size(0) == L);
     assert(fwd.size(1) == N);
@@ -181,7 +182,7 @@ static void test_dim_selection_2d() {
     // Each channel should match independent 1-D transform
     for (int64_t c = 0; c < C; ++c) {
         auto signal_c = signal.select(1, c);  // [N]
-        auto fwd_c = wavelet_packet_forward_1d(signal_c, "haar", -1, L);  // [L, N]
+        auto fwd_c = wavelet_packet_forward_1d(signal_c, make_wavelet("haar"), -1, L);  // [L, N]
         auto fwd_slice = fwd.select(2, c);  // [L, N]
         auto diff = (fwd_slice - fwd_c).abs().max().item<double>();
         assert(diff < TOL);
@@ -189,7 +190,7 @@ static void test_dim_selection_2d() {
 
     // Roundtrip
     auto leaf = fwd.select(0, L - 1);  // [N, C]
-    auto rec = wavelet_packet_inverse_1d(leaf, "haar", 0, L);
+    auto rec = wavelet_packet_inverse_1d(leaf, make_wavelet("haar"), 0, L);
     assert(rec.sizes() == signal.sizes());
     auto diff = (rec - signal).abs().max().item<double>();
     assert(diff < TOL);
@@ -203,7 +204,7 @@ static void test_dim_selection_3d() {
 
     auto signal = torch::randn({B, N, C}, torch::kFloat64);
 
-    auto fwd = wavelet_packet_forward_1d(signal, "db2", 1, L);
+    auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("db2"), 1, L);
     assert(fwd.dim() == 4);
     assert(fwd.size(0) == B);
     assert(fwd.size(1) == L);
@@ -214,7 +215,7 @@ static void test_dim_selection_3d() {
     for (int64_t b = 0; b < B; ++b) {
         for (int64_t c = 0; c < C; ++c) {
             auto signal_bc = signal[b].select(1, c);  // [N]
-            auto fwd_bc = wavelet_packet_forward_1d(signal_bc, "db2", -1, L);  // [L, N]
+            auto fwd_bc = wavelet_packet_forward_1d(signal_bc, make_wavelet("db2"), -1, L);  // [L, N]
             auto fwd_slice = fwd[b].select(2, c);  // [L, N]
             auto diff = (fwd_slice - fwd_bc).abs().max().item<double>();
             assert(diff < TOL);
@@ -223,7 +224,7 @@ static void test_dim_selection_3d() {
 
     // Roundtrip
     auto leaf = fwd.select(1, L - 1);  // [B, N, C]
-    auto rec = wavelet_packet_inverse_1d(leaf, "db2", 1, L);
+    auto rec = wavelet_packet_inverse_1d(leaf, make_wavelet("db2"), 1, L);
     assert(rec.sizes() == signal.sizes());
     auto diff = (rec - signal).abs().max().item<double>();
     assert(diff < TOL);
@@ -237,8 +238,8 @@ static void test_dim_selection_negative() {
 
     auto signal = torch::randn({B, N, C}, torch::kFloat64);
 
-    auto fwd_pos = wavelet_packet_forward_1d(signal, "haar", 1, L);
-    auto fwd_neg = wavelet_packet_forward_1d(signal, "haar", -2, L);
+    auto fwd_pos = wavelet_packet_forward_1d(signal, make_wavelet("haar"), 1, L);
+    auto fwd_neg = wavelet_packet_forward_1d(signal, make_wavelet("haar"), -2, L);
     assert(fwd_pos.sizes() == fwd_neg.sizes());
     auto diff = (fwd_pos - fwd_neg).abs().max().item<double>();
     assert(diff < TOL);
@@ -246,8 +247,8 @@ static void test_dim_selection_negative() {
     // Same for inverse
     auto leaf_pos = fwd_pos.select(1, L - 1);
     auto leaf_neg = fwd_neg.select(1, L - 1);
-    auto rec_pos = wavelet_packet_inverse_1d(leaf_pos, "haar", 1, L);
-    auto rec_neg = wavelet_packet_inverse_1d(leaf_neg, "haar", -2, L);
+    auto rec_pos = wavelet_packet_inverse_1d(leaf_pos, make_wavelet("haar"), 1, L);
+    auto rec_neg = wavelet_packet_inverse_1d(leaf_neg, make_wavelet("haar"), -2, L);
     auto diff_inv = (rec_pos - rec_neg).abs().max().item<double>();
     assert(diff_inv < TOL);
 
@@ -260,8 +261,8 @@ static void test_dim_default_is_last() {
 
     auto signal = torch::randn({B, N}, torch::kFloat64);
 
-    auto fwd_default = wavelet_packet_forward_1d(signal, "haar", -1, L);
-    auto fwd_explicit = wavelet_packet_forward_1d(signal, "haar", 1, L);
+    auto fwd_default = wavelet_packet_forward_1d(signal, make_wavelet("haar"), -1, L);
+    auto fwd_explicit = wavelet_packet_forward_1d(signal, make_wavelet("haar"), 1, L);
     assert(fwd_default.sizes() == fwd_explicit.sizes());
     auto diff = (fwd_default - fwd_explicit).abs().max().item<double>();
     assert(diff < TOL);
@@ -272,7 +273,7 @@ static void test_dim_default_is_last() {
 // --- Perfect reconstruction tests ---
 
 static void test_perfect_reconstruction(
-    std::string const& wavelet_name,
+    Wavelet const& wavelet,
     int64_t N,
     int64_t max_level,
     OrthMethod method,
@@ -280,9 +281,9 @@ static void test_perfect_reconstruction(
 
     auto signal = torch::randn({N}, torch::kFloat64);
 
-    auto fwd = wavelet_packet_forward_1d(signal, wavelet_name, -1, max_level, method);
+    auto fwd = wavelet_packet_forward_1d(signal, wavelet, -1, max_level, method);
     auto leaf = fwd.select(0, max_level - 1);  // [N]
-    auto reconstructed = wavelet_packet_inverse_1d(leaf, wavelet_name, -1, max_level, method);
+    auto reconstructed = wavelet_packet_inverse_1d(leaf, wavelet, -1, max_level, method);
 
     auto diff = (reconstructed - signal).abs().max().item<double>();
     if (diff > TOL) {
@@ -297,9 +298,9 @@ static void test_perfect_reconstruction(
 static void test_perfect_reconstruction_batch() {
     auto signal = torch::randn({5, 16}, torch::kFloat64);
 
-    auto fwd = wavelet_packet_forward_1d(signal, "db2", -1, 2);
+    auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("db2"), -1, 2);
     auto leaf = fwd.select(1, 1);  // [batch, N] — level index 1 is max_level-1 for L=2
-    auto reconstructed = wavelet_packet_inverse_1d(leaf, "db2", -1, 2);
+    auto reconstructed = wavelet_packet_inverse_1d(leaf, make_wavelet("db2"), -1, 2);
 
     assert(reconstructed.sizes() == signal.sizes());
     auto diff = (reconstructed - signal).abs().max().item<double>();
@@ -317,7 +318,7 @@ static void test_energy_preservation() {
     double const signal_energy = signal.norm().item<double>();
 
     int64_t const L = 3;
-    auto fwd = wavelet_packet_forward_1d(signal, "haar", -1, L);
+    auto fwd = wavelet_packet_forward_1d(signal, make_wavelet("haar"), -1, L);
     // Each level's coefficients should preserve energy (Parseval's theorem)
     for (int64_t l = 0; l < L; ++l) {
         auto level_coeffs = fwd.select(0, l);  // [N]
@@ -338,7 +339,7 @@ static void test_invalid_max_level_zero() {
     auto signal = torch::randn({8}, torch::kFloat64);
     bool caught = false;
     try {
-        wavelet_packet_forward_1d(signal, "haar", -1, 0);
+        wavelet_packet_forward_1d(signal, make_wavelet("haar"), -1, 0);
     } catch (std::invalid_argument const&) {
         caught = true;
     }
@@ -350,7 +351,7 @@ static void test_invalid_non_divisible() {
     auto signal = torch::randn({12}, torch::kFloat64);
     bool caught = false;
     try {
-        wavelet_packet_forward_1d(signal, "haar", -1, 4);  // 12 % 16 != 0
+        wavelet_packet_forward_1d(signal, make_wavelet("haar"), -1, 4);  // 12 % 16 != 0
     } catch (std::invalid_argument const&) {
         caught = true;
     }
@@ -362,7 +363,7 @@ static void test_invalid_signal_too_short() {
     auto signal = torch::randn({8}, torch::kFloat64);
     bool caught = false;
     try {
-        wavelet_packet_forward_1d(signal, "db3", -1, 2);  // dec_len=6, subband size = 8/2 = 4 < 6
+        wavelet_packet_forward_1d(signal, make_wavelet("db3"), -1, 2);  // dec_len=6, subband size = 8/2 = 4 < 6
     } catch (std::invalid_argument const&) {
         caught = true;
     }
@@ -419,7 +420,7 @@ int main() {
 
     std::cout << "Perfect reconstruction tests:" << std::endl;
     struct ReconCase {
-        std::string wavelet;
+        std::string wavelet_name;
         int64_t N;
         int64_t max_level;
     };
@@ -432,11 +433,12 @@ int main() {
         {"db3", 32, 3},
     };
     for (auto const& rc : recon_cases) {
+        auto const w = make_wavelet(rc.wavelet_name);
         for (auto method : {OrthMethod::qr, OrthMethod::gramschmidt}) {
             std::string const method_tag = (method == OrthMethod::qr) ? "qr" : "gs";
-            std::string const label = rc.wavelet + " N=" + std::to_string(rc.N) +
+            std::string const label = rc.wavelet_name + " N=" + std::to_string(rc.N) +
                 " L=" + std::to_string(rc.max_level) + " " + method_tag;
-            test_perfect_reconstruction(rc.wavelet, rc.N, rc.max_level, method, label);
+            test_perfect_reconstruction(w, rc.N, rc.max_level, method, label);
         }
     }
 

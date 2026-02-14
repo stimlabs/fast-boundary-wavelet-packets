@@ -1,4 +1,5 @@
 #include "transform.hpp"
+#include "wavelet.hpp"
 #include "test_util.hpp"
 
 #include <iostream>
@@ -9,7 +10,7 @@ static constexpr double TOL = 1e-7;
 
 struct WPTestCase {
     std::string dimension;
-    std::string wavelet;
+    std::string wavelet_name;
     int64_t length;
     int64_t max_level;
     OrthMethod method;
@@ -17,13 +18,14 @@ struct WPTestCase {
 };
 
 static void test_wpt_forward(WPTestCase const& tc) {
-    std::string const tag = "wpt_" + tc.dimension + "_" + tc.wavelet + "_" +
+    std::string const tag = "wpt_" + tc.dimension + "_" + tc.wavelet_name + "_" +
         std::to_string(tc.length) + "_L" + std::to_string(tc.max_level);
 
     auto signal = load_tensor(data_path(tag + "_signal.pt"));
     assert(signal.size(0) == tc.length);
 
-    auto result = wavelet_packet_forward_1d(signal, tc.wavelet, -1, tc.max_level, tc.method);
+    auto const w = make_wavelet(tc.wavelet_name);
+    auto result = wavelet_packet_forward_1d(signal, w, -1, tc.max_level, tc.method);
 
     for (int64_t level = 1; level <= tc.max_level; ++level) {
         auto ref = load_tensor(data_path(
@@ -43,13 +45,14 @@ static void test_wpt_forward(WPTestCase const& tc) {
 }
 
 static void test_wpt_roundtrip(WPTestCase const& tc) {
-    std::string const tag = "wpt_" + tc.dimension + "_" + tc.wavelet + "_" +
+    std::string const tag = "wpt_" + tc.dimension + "_" + tc.wavelet_name + "_" +
         std::to_string(tc.length) + "_L" + std::to_string(tc.max_level);
 
     auto signal = load_tensor(data_path(tag + "_signal.pt"));
-    auto fwd = wavelet_packet_forward_1d(signal, tc.wavelet, -1, tc.max_level, tc.method);
+    auto const w = make_wavelet(tc.wavelet_name);
+    auto fwd = wavelet_packet_forward_1d(signal, w, -1, tc.max_level, tc.method);
     auto leaf = fwd.select(0, tc.max_level - 1);  // [N]
-    auto reconstructed = wavelet_packet_inverse_1d(leaf, tc.wavelet, -1, tc.max_level, tc.method);
+    auto reconstructed = wavelet_packet_inverse_1d(leaf, w, -1, tc.max_level, tc.method);
 
     auto diff = (reconstructed - signal).abs().max().item<double>();
     if (diff > TOL) {
@@ -75,7 +78,7 @@ int main() {
     };
 
     for (auto const& tc : cases) {
-        std::string const label = tc.wavelet + " N=" + std::to_string(tc.length) +
+        std::string const label = tc.wavelet_name + " N=" + std::to_string(tc.length) +
             " L=" + std::to_string(tc.max_level) + " " + tc.method_tag;
         std::cout << "  " << label << ":" << std::endl;
         test_wpt_forward(tc);

@@ -1,11 +1,21 @@
 # fast-boundary-wavelet-packets — project Makefile
 # ------------------------------------------------
 # Configuration — override on the command line or via environment variables.
-TORCH_DIR     ?= $(error Set TORCH_DIR to <libtorch>/share/cmake/Torch, e.g. make build TORCH_DIR=/opt/libtorch/share/cmake/Torch)
 BUILD_DIR     := build
 BUILD_TYPE    ?= Release
 REFERENCE_DIR := reference
 REFERENCE_URL := https://github.com/v0lta/PyTorch-Wavelet-Toolbox.git
+
+ifdef BUILD_PYTHON_BINDINGS
+	# Python bindings (opt-in): make build BUILD_PYTHON_BINDINGS=1
+	TORCH_DIR           := $(shell python -c "import torch; print(torch.utils.cmake_prefix_path + '/Torch')")
+	PYTHON_EXE          := $(shell which python)
+    PYBIND11_DIR        := $(shell python -m pybind11 --cmakedir 2>/dev/null)
+    CMAKE_BINDINGS_FLAG := -DBUILD_PYTHON_BINDINGS=ON -DPython_EXECUTABLE=$(PYTHON_EXE) -Dpybind11_DIR=$(PYBIND11_DIR)
+else
+	TORCH_DIR           ?= $(error Set TORCH_DIR to <libtorch>/share/cmake/Torch, e.g. make build TORCH_DIR=/opt/libtorch/share/cmake/Torch)
+    CMAKE_BINDINGS_FLAG :=
+endif
 
 # ------------------------------------------------
 # Phony targets
@@ -50,11 +60,21 @@ setup-python:
 # ---------- Build ---------------------------------------------------
 
 ## Configure and build the C++ project with CMake.
+## When BUILD_PYTHON_BINDINGS=1, also installs the .so symlink and .pyi stub
+## into the active virtualenv's site-packages so `import fbwp` works everywhere.
 build:
 	cmake -S . -B $(BUILD_DIR) \
 		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DTorch_DIR=$(TORCH_DIR)
+		-DTorch_DIR=$(TORCH_DIR) \
+		$(CMAKE_BINDINGS_FLAG)
 	cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) -j
+ifdef BUILD_PYTHON_BINDINGS
+	@SITE_PKG=$$(python -c "import sysconfig; print(sysconfig.get_path('purelib'))") && \
+		SO=$$(ls $(BUILD_DIR)/fbwp.cpython-*.so 2>/dev/null | head -1) && \
+		ln -sfn "$$(realpath $$SO)" "$$SITE_PKG/$$(basename $$SO)" && \
+		cp stubs/fbwp.pyi "$$SITE_PKG/fbwp.pyi" && \
+		echo "Installed fbwp into $$SITE_PKG"
+endif
 
 # ---------- Test ----------------------------------------------------
 

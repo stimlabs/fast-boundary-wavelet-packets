@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
+
 # ---------- LibTorch ----------
 # Torch_DIR must point to the directory containing TorchConfig.cmake.
 # For a standard download this is: <libtorch>/share/cmake/Torch
@@ -22,8 +24,22 @@ target_link_libraries(check_build ${TORCH_LIBRARIES})
 
 # ---------- Library ----------
 add_library(fbwp src/wavelet.cpp src/sparse_math.cpp src/matrix_build.cpp src/orthogonalize.cpp src/transform.cpp)
+set_target_properties(fbwp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(fbwp PUBLIC include)
 target_link_libraries(fbwp ${TORCH_LIBRARIES})
+
+# ---------- Bindings ----------
+if(BUILD_PYTHON_BINDINGS)
+    set(Python_EXECUTABLE "${Python_EXECUTABLE}" CACHE FILEPATH "Path to Python interpreter")
+    find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+    find_package(pybind11 REQUIRED)
+    find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib" NO_DEFAULT_PATH)
+
+    pybind11_add_module(fbwp_python bindings/python_bindings.cpp)
+    set_target_properties(fbwp_python PROPERTIES OUTPUT_NAME fbwp)
+    target_include_directories(fbwp_python PUBLIC include)
+    target_link_libraries(fbwp_python PRIVATE fbwp ${TORCH_LIBRARIES} ${TORCH_PYTHON_LIBRARY})
+endif()
 
 # ---------- Tests ----------
 enable_testing()

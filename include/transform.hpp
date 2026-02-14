@@ -1,10 +1,9 @@
 #pragma once
 
-#include <string>
-
 #include <torch/torch.h>
 
 #include "orthogonalize.hpp"
+#include "wavelet.hpp"
 
 /// Compute the maximum feasible wavelet packet decomposition level.
 /// Largest L where: N % 2^L == 0 AND N / 2^(L-1) >= dec_len.
@@ -16,7 +15,7 @@ int64_t compute_max_level(int64_t signal_length, int64_t dec_len);
 /// Example: input_signal [batch, N] with dim=-1 → [batch, max_level, N].
 torch::Tensor wavelet_packet_forward_1d(
     torch::Tensor const& input_signal,
-    std::string const& wavelet_name,
+    Wavelet const& wavelet,
     int64_t dim = -1,
     int64_t max_level = -1,
     OrthMethod orth_method = OrthMethod::qr);
@@ -25,7 +24,7 @@ torch::Tensor wavelet_packet_forward_1d(
 /// leaf_coeffs has the same shape as the analyzed dimension of the input.
 torch::Tensor wavelet_packet_inverse_1d(
     torch::Tensor const& leaf_coeffs,
-    std::string const& wavelet_name,
+    Wavelet const& wavelet,
     int64_t dim = -1,
     int64_t max_level = -1,
     OrthMethod orth_method = OrthMethod::qr);

@@ -2,7 +2,6 @@
 
 #include "matrix_build.hpp"
 #include "sparse_math.hpp"
-#include "wavelet.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -81,12 +80,10 @@ static int64_t resolve_dim(int64_t dim, int64_t ndim) {
 
 torch::Tensor wavelet_packet_forward_1d(
     torch::Tensor const& input_signal,
-    std::string const& wavelet_name,
+    Wavelet const& wavelet,
     int64_t dim,
     int64_t max_level,
     OrthMethod orth_method) {
-
-    auto const w = make_wavelet(wavelet_name);
 
     // Resolve dim and move analyzed dimension to last position.
     int64_t const ndim = input_signal.dim();
@@ -99,7 +96,7 @@ torch::Tensor wavelet_packet_forward_1d(
     auto const orig_shape = x.sizes().vec();                    // shape with N at the end
     int64_t const N = orig_shape.back();
 
-    validate_packet_args(N, max_level, w.dec_len());
+    validate_packet_args(N, max_level, wavelet.dec_len());
 
     // Flatten leading dims into a single batch dim → [batch, N]
     auto flat = x.reshape({-1, N});
@@ -117,7 +114,7 @@ torch::Tensor wavelet_packet_forward_1d(
         int64_t const M = N / (1LL << (level - 1));  // subband size before split
         int64_t const k = 1LL << (level - 1);        // number of subbands
 
-        auto A_block = construct_boundary_a(w, M, opts, orth_method);
+        auto A_block = construct_boundary_a(wavelet, M, opts, orth_method);
         if (k > 1) {
             A_block = block_diag_repeat(A_block, k);
         }
@@ -152,12 +149,10 @@ torch::Tensor wavelet_packet_forward_1d(
 
 torch::Tensor wavelet_packet_inverse_1d(
     torch::Tensor const& leaf_coeffs,
-    std::string const& wavelet_name,
+    Wavelet const& wavelet,
     int64_t dim,
     int64_t max_level,
     OrthMethod orth_method) {
-
-    auto const w = make_wavelet(wavelet_name);
 
     // Resolve dim and move analyzed dimension to last position.
     int64_t const ndim = leaf_coeffs.dim();
@@ -170,7 +165,7 @@ torch::Tensor wavelet_packet_inverse_1d(
     auto const orig_shape = x.sizes().vec();
     int64_t const N = orig_shape.back();
 
-    validate_packet_args(N, max_level, w.dec_len());
+    validate_packet_args(N, max_level, wavelet.dec_len());
 
     // Flatten leading dims into a single batch dim → [batch, N]
     auto flat = x.reshape({-1, N});
@@ -194,7 +189,7 @@ torch::Tensor wavelet_packet_inverse_1d(
         int64_t const M = N / (1LL << (level - 1));
         int64_t const k = 1LL << (level - 1);
 
-        auto S_block = construct_boundary_s(w, M, opts, orth_method);
+        auto S_block = construct_boundary_s(wavelet, M, opts, orth_method);
         if (k > 1) {
             S_block = block_diag_repeat(S_block, k);
         }
