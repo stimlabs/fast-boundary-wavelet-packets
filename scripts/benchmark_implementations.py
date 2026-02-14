@@ -47,14 +47,20 @@ def fbwp_forward(
     return coeffs[..., -1, :]
 
 
-def time_fn(fn, *args, warmup: int, runs: int) -> float:
+def time_fn(fn, *args, warmup: int, runs: int, sync_cuda: bool = False) -> float:
     """Time a function: returns median wall-clock time in seconds."""
     for _ in range(warmup):
         fn(*args)
+        if sync_cuda:
+            torch.cuda.synchronize()
     times = []
     for _ in range(runs):
+        if sync_cuda:
+            torch.cuda.synchronize()
         t0 = time.perf_counter()
         fn(*args)
+        if sync_cuda:
+            torch.cuda.synchronize()
         t1 = time.perf_counter()
         times.append(t1 - t0)
     times.sort()
@@ -66,13 +72,19 @@ def main(
     wavelets: list[str],
     signal_lengths: list[int],
     dtype: str,
+    device: str | None,
     orth_method: Literal["qr", "gramschmidt"],
     warmup_runs: int,
     timed_runs: int,
     random_seed: int,
 ) -> None:
+    torch.manual_seed(random_seed)
+
     torch_dtype = DTYPE_CHOICES[dtype]
+    torch_device = torch.device(device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu"))
     rtol, atol = TOLERANCES[torch_dtype]
+    print(f"torch device: {torch_device}")
+    sync_cuda = torch_device.type == "cuda"
 
     hdr = (
         f"{'wavelet':<10} {'length':>8} {'level':>5} "
@@ -82,11 +94,9 @@ def main(
     print(hdr)
     print(sep)
 
-    torch.manual_seed(random_seed)
-
     for wavelet in wavelets:
         for length in signal_lengths:
-            signal = torch.randn(1, length, dtype=torch_dtype)
+            signal = torch.randn(1, length, dtype=torch_dtype, device=torch_device)
 
             dec_len = pywt.Wavelet(wavelet).dec_len
             max_level = fbwp.compute_max_level(length, dec_len)
@@ -94,9 +104,9 @@ def main(
                 continue
 
             t_ptwt = time_fn(ptwt_forward, signal, wavelet, max_level, orth_method,
-                             warmup=warmup_runs, runs=timed_runs)
+                             warmup=warmup_runs, runs=timed_runs, sync_cuda=sync_cuda)
             t_fbwp = time_fn(fbwp_forward, signal, wavelet, max_level, orth_method,
-                             warmup=warmup_runs, runs=timed_runs)
+                             warmup=warmup_runs, runs=timed_runs, sync_cuda=sync_cuda)
 
             c_ptwt = ptwt_forward(signal, wavelet, max_level, orth_method)
             c_fbwp = fbwp_forward(signal, wavelet, max_level, orth_method)
@@ -129,6 +139,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dtype", choices=list(DTYPE_CHOICES), default="float64",
         help="tensor dtype (default: float64)",
+    )
+    parser.add_argument(
+        "--device", default=None,
+        help="torch device (default: cuda if available, else cpu)",
     )
     parser.add_argument(
         "--orth-method", choices=["qr", "gramschmidt"], default="qr",

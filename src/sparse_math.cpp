@@ -28,7 +28,7 @@ torch::Tensor construct_conv_matrix(
         }
     }
 
-    auto const long_opts = torch::TensorOptions().dtype(torch::kLong);
+    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(filter.device());
     auto row_idx = torch::tensor(rows, long_opts);
     auto col_idx = torch::tensor(cols, long_opts);
     auto indices = torch::stack({row_idx, col_idx});
@@ -47,11 +47,12 @@ torch::Tensor construct_strided_conv_matrix(
     auto conv_matrix = construct_conv_matrix(filter, input_length);
 
     // sameshift: select rows starting at 1 with given stride
-    auto select_rows = torch::arange(1, conv_matrix.size(0), stride);
+    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(filter.device());
+    auto select_rows = torch::arange(1, conv_matrix.size(0), stride, long_opts);
     int64_t const n_selected = select_rows.size(0);
 
     auto sel_indices = torch::stack({
-        torch::arange(0, n_selected),
+        torch::arange(0, n_selected, long_opts),
         select_rows});
     auto sel_values = torch::ones(n_selected, sparse_opts(filter));
 
