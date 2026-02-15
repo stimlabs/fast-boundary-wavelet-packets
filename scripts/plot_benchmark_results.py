@@ -8,14 +8,25 @@ def main(results_json: Path) -> None:
     with results_json.open("r") as file:
         results = json.load(file)
 
+    def _shape_key(r):
+        s = r.get("input_shape", [r.get("length")])
+        if isinstance(s, list):
+            return tuple(s)
+        return (s,)
+
+    def _shape_label(r):
+        s = r.get("input_shape", [r.get("length")])
+        if isinstance(s, list):
+            return "x".join(str(d) for d in s)
+        return str(s)
+
     for wavelet_name in results["config"]["wavelets"]:
         wavelet_results = sorted(
             [r for r in results["results"] if r["wavelet"] == wavelet_name],
-            key=lambda r: r["length"],
+            key=_shape_key,
         )
 
-        lengths = [r["length"] for r in wavelet_results]
-        x = range(len(lengths))
+        x = range(len(wavelet_results))
 
         ptwt_mean = [r["ptwt"]["mean_s"] for r in wavelet_results]
         ptwt_std = [r["ptwt"]["std_s"] for r in wavelet_results]
@@ -50,18 +61,25 @@ def main(results_json: Path) -> None:
             )
 
         tick_labels = [
-            f"{r['length']}\n(L={r['max_level']})" for r in wavelet_results
+            f"{_shape_label(r)}\n(L={r['max_level']})" for r in wavelet_results
         ]
         ax.set_xticks(list(x))
         ax.set_xticklabels(tick_labels)
-        ax.set_xlabel("Signal length (max level)")
+        ax.set_xlabel("Input shape (max level)")
         ax.set_ylabel("Time (s)")
-        ax.set_title(f"Wavelet packet transform — {wavelet_name}")
+        cfg = results["config"]
+        fig.suptitle(f"WPT runtime comparison — {wavelet_name}")
+        fig.text(
+            0.5, 0.935,
+            f"dtype={cfg['dtype']}  device={cfg['device']}"
+            f"  batch={cfg['batch_size']}  orth={cfg['orth_method']}",
+            ha="center", va="top", fontsize=9, color="gray",
+        )
         ax.legend()
         ax.grid(True, alpha=0.3)
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.98])
 
-        out_path = results_json.parent / f"benchmark_{wavelet_name}.png"
+        out_path = results_json.parent / f"{results_json.stem}_{wavelet_name}.png"
         fig.savefig(out_path, dpi=150)
         plt.close(fig)
         print(f"Saved {out_path}")

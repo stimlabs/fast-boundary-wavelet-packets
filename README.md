@@ -1,6 +1,6 @@
 # fast-boundary-wavelet-packets 📦
 
-> High-performance C++ (LibTorch) implementation of the wavelet packet transform with special boundary filters for finite-domain, perfectly reconstructible multi-scale analysis.
+**High-performance C++ (LibTorch) implementation of the wavelet packet transform with special boundary filters for finite-domain, perfectly reconstructible multi-scale analysis.**
 
 ## Motivation
 
@@ -112,6 +112,13 @@ For interior (non-boundary) samples, separable and non-separable produce identic
 
 Both approaches yield valid orthogonal analysis matrices with perfect reconstruction (`S A = I`), but the actual boundary filter coefficients differ. Orthogonalization of boundary rows is not unique: there are many valid orthonormal replacements for the boundary rows. The separable approach constrains the solution to be a product of independent 1-D solutions, while the non-separable approach has more degrees of freedom at the corners. As a result, the two modes produce **different wavelet packet coefficients** even though both are mathematically correct.
 
+## Benchmarks
+
+|                   1-D (batch=64)                    |                   2-D (batch=64)                    |
+|:---------------------------------------------------:|:---------------------------------------------------:|
+| ![1-D benchmark](benchmarks/results_1d_64b_db3.png) | ![2-D benchmark](benchmarks/results_2d_64b_db3.png) |
+
+
 ## Development Setup
 
 ### Prerequisites
@@ -157,3 +164,9 @@ make build TORCH_DIR=~/libs/libtorch/share/cmake/Torch
 # 4. Run tests.
 make test
 ```
+
+---
+
+### Acknowledgement
+
+This project is a focused C++ reimplementation of the boundary-filter wavelet packet transform from the [PyTorch-Wavelet-Toolbox (ptwt)](https://github.com/v0lta/PyTorch-Wavelet-Toolbox) by Moritz Wolter *et al.* This library owes its correctness to their work and uses ptwt as the reference and source of truth for verification.
