@@ -15,6 +15,31 @@ if(DEFINED ENV{TORCH_DIR} AND NOT DEFINED Torch_DIR)
     set(Torch_DIR $ENV{TORCH_DIR})
 endif()
 
+# ---------- Python (early, needed for Torch auto-detection) ----------
+if(BUILD_PYTHON_BINDINGS)
+    if(DEFINED Python_EXECUTABLE)
+        set(Python_EXECUTABLE "${Python_EXECUTABLE}" CACHE FILEPATH "Path to Python interpreter")
+    endif()
+    find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
+
+    # Auto-detect Torch_DIR from Python's torch package.
+    if(NOT DEFINED Torch_DIR)
+        execute_process(
+            COMMAND "${Python_EXECUTABLE}" -c
+                "import torch; print(torch.utils.cmake_prefix_path + '/Torch')"
+            OUTPUT_VARIABLE Torch_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+    endif()
+
+    # Auto-detect pybind11_DIR from Python's pybind11 package.
+    if(NOT DEFINED pybind11_DIR)
+        execute_process(
+            COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
+            OUTPUT_VARIABLE pybind11_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+    endif()
+endif()
+
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
@@ -30,15 +55,18 @@ target_link_libraries(fbwp ${TORCH_LIBRARIES})
 
 # ---------- Bindings ----------
 if(BUILD_PYTHON_BINDINGS)
-    set(Python_EXECUTABLE "${Python_EXECUTABLE}" CACHE FILEPATH "Path to Python interpreter")
-    find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
     find_package(pybind11 REQUIRED)
     find_library(TORCH_PYTHON_LIBRARY torch_python PATHS "${TORCH_INSTALL_PREFIX}/lib" NO_DEFAULT_PATH)
 
     pybind11_add_module(fbwp_python bindings/python_bindings.cpp)
-    set_target_properties(fbwp_python PROPERTIES OUTPUT_NAME fbwp)
+    set_target_properties(fbwp_python PROPERTIES
+        OUTPUT_NAME fbwp
+        INSTALL_RPATH "$ORIGIN/torch/lib")
     target_include_directories(fbwp_python PUBLIC include)
     target_link_libraries(fbwp_python PRIVATE fbwp ${TORCH_LIBRARIES} ${TORCH_PYTHON_LIBRARY})
+
+    install(TARGETS fbwp_python LIBRARY DESTINATION .)
+    install(FILES stubs/fbwp.pyi DESTINATION . RENAME fbwp.pyi)
 endif()
 
 # ---------- Tests ----------

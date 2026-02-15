@@ -8,13 +8,11 @@ REFERENCE_URL := https://github.com/v0lta/PyTorch-Wavelet-Toolbox.git
 
 ifdef BUILD_PYTHON_BINDINGS
 	# Python bindings (opt-in): make build BUILD_PYTHON_BINDINGS=1
-	TORCH_DIR           := $(shell python -c "import torch; print(torch.utils.cmake_prefix_path + '/Torch')")
-	PYTHON_EXE          := $(shell which python)
-    PYBIND11_DIR        := $(shell python -m pybind11 --cmakedir 2>/dev/null)
-    CMAKE_BINDINGS_FLAG := -DBUILD_PYTHON_BINDINGS=ON -DPython_EXECUTABLE=$(PYTHON_EXE) -Dpybind11_DIR=$(PYBIND11_DIR)
+	# CMake auto-detects Python, Torch, and pybind11 from the active venv.
+    CMAKE_EXTRA_FLAGS := -DBUILD_PYTHON_BINDINGS=ON
 else
-	TORCH_DIR           ?= $(error Set TORCH_DIR to <libtorch>/share/cmake/Torch, e.g. make build TORCH_DIR=/opt/libtorch/share/cmake/Torch)
-    CMAKE_BINDINGS_FLAG :=
+	TORCH_DIR         ?= $(error Set TORCH_DIR to <libtorch>/share/cmake/Torch, e.g. make build TORCH_DIR=/opt/libtorch/share/cmake/Torch)
+    CMAKE_EXTRA_FLAGS := -DTorch_DIR=$(TORCH_DIR)
 endif
 
 # ------------------------------------------------
@@ -62,11 +60,15 @@ setup-python:
 ## Configure and build the C++ project with CMake.
 ## When BUILD_PYTHON_BINDINGS=1, also installs the .so symlink and .pyi stub
 ## into the active virtualenv's site-packages so `import fbwp` works everywhere.
+## Python deps (torch, pybind11) must be installed before CMake can find them.
+ifdef BUILD_PYTHON_BINDINGS
+build: setup-python
+else
 build:
+endif
 	cmake -S . -B $(BUILD_DIR) \
 		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-DTorch_DIR=$(TORCH_DIR) \
-		$(CMAKE_BINDINGS_FLAG)
+		$(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD_DIR) --config $(BUILD_TYPE) -j
 ifdef BUILD_PYTHON_BINDINGS
 	@SITE_PKG=$$(python -c "import sysconfig; print(sysconfig.get_path('purelib'))") && \

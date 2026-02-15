@@ -1,0 +1,31 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=3.0.1", "torch>=2.10.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "fbwp"
+version = "0.1.0"
+description = "High-performance C++ (LibTorch) implementation of the wavelet packet transform with special boundary filters for finite-domain, perfectly reconstructible multi-scale analysis."
+readme = "README.md"
+authors = [
+    { name = "Niclas Pillath", email = "npillath@stimlabs.dev" },
+    { name = "Claude Opus 4.6", email = "noreply@anthropic.com" }
+]
+keywords = [
+    "wavelet packet transform",
+    "boundary filters",
+    "libtorch",
+]
+requires-python = ">=3.10"
+dependencies = ["torch>=2.10.0"]
+
+[project.optional-dependencies]
+dev = [
+    "matplotlib>=3.10.8",
+    "scikit-build-core>=0.10",
+    "ptwt>=1.0.1",
+    "pybind11>=3.0.1",
+]
+
+[tool.scikit-build]
+cmake.define.BUILD_PYTHON_BINDINGS = "ON"
