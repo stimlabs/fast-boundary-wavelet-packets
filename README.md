@@ -101,6 +101,17 @@ At each level, individual subbands are downsampled and therefore have reduced sp
 However, by arranging all nodes of a level, meaning all filter paths of the filter bank, into a structured tiling over rows and columns, the coefficients of that level collectively form a representation with the **same overall spatial extent as the input**.
 This makes it possible to stack decomposition levels along an additional tensor dimension that explicitly represents the scale.
 
+### Separable 2-D transform
+
+The 2-D wavelet packet transform in this library uses a **separable** approach: at each decomposition level, two independent 1-D boundary-filter transforms are applied, one along each spatial axis. The reference library (ptwt) also supports a **non-separable** mode, where a single 2-D analysis matrix is constructed via the Kronecker product of the two 1-D matrices and then orthogonalized jointly. This library implements only the separable mode.
+
+For interior (non-boundary) samples, separable and non-separable produce identical results — applying 1-D transforms along each axis sequentially is mathematically equivalent to applying their Kronecker product. The two modes diverge **only at the signal boundaries**, because of how boundary filter rows are orthogonalized:
+
+* **Separable**: Each 1-D analysis matrix has its boundary rows orthogonalized independently. The effective 2-D operator is the Kronecker product of two independently-orthogonalized 1-D matrices. Boundary handling along one axis is unaware of the other axis.
+* **Non-separable**: The full 2-D matrix (Kronecker product of the two 1-D matrices) is formed first, then its boundary rows are identified and orthogonalized jointly. This couples the boundary corrections — in particular at corners, where both axes have boundary effects simultaneously.
+
+Both approaches yield valid orthogonal analysis matrices with perfect reconstruction (`S A = I`), but the actual boundary filter coefficients differ. Orthogonalization of boundary rows is not unique: there are many valid orthonormal replacements for the boundary rows. The separable approach constrains the solution to be a product of independent 1-D solutions, while the non-separable approach has more degrees of freedom at the corners. As a result, the two modes produce **different wavelet packet coefficients** even though both are mathematically correct.
+
 ## Development Setup
 
 ### Prerequisites

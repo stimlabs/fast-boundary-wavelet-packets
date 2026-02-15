@@ -104,6 +104,8 @@ Used only for constructing valid boundary filter rows:
 
 The 2-D wavelet packet transform applies two independent 1-D boundary-filter transforms per level (one along each spatial axis). At level L with k = 2^(L−1) existing subbands per axis, each axis gets `block_diag_repeat(A, k)` so all subbands are split in one sparse `mm`.
 
+**Separable vs non-separable.** This library implements only the separable mode. The reference (ptwt) also offers a non-separable mode (`separable=False`, which is its default). Interior samples are identical either way; the modes differ only at signal boundaries because the boundary rows are orthogonalized independently per axis (separable) vs jointly on the full 2-D Kronecker-product matrix (non-separable). Both are valid — they just produce different boundary filter coefficients. When calling ptwt for comparison, always pass `separable=True`.
+
 **pywt axis convention and frequency ordering.** The reference (ptwt/pywt) uses an unusual coordinate convention: axis 0 = horizontal, axis 1 = vertical. This means:
 
 - The analysis matrix applied along rows (axis 0) controls the *horizontal* frequency.
