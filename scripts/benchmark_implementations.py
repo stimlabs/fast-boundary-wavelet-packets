@@ -25,10 +25,23 @@ DTYPE_CHOICES: dict[str, torch.dtype] = {
 }
 
 
-def ptwt_forward(
+def parse_shape(s: str) -> tuple[int, ...]:
+    """Parse a shape string like '1024' or '64x64' into a tuple of ints."""
+    parts = s.split("x")
+    if len(parts) not in (1, 2):
+        raise argparse.ArgumentTypeError(
+            f"invalid shape '{s}': must be N (1-D) or HxW (2-D)")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid shape '{s}': dimensions must be integers")
+
+
+def ptwt_forward_1d(
         signal: torch.Tensor, wavelet: str, max_level: int, orth_method: Literal["qr", "gramschmidt"]
 ) -> torch.Tensor:
-    """Run ptwt forward wavelet packet transform, return leaf-level coefficients."""
+    """Run ptwt forward 1-D wavelet packet transform, return leaf-level coefficients."""
     wp = ptwt.WaveletPacket(
         data=signal,
         wavelet=wavelet,
@@ -40,15 +53,45 @@ def ptwt_forward(
     return torch.cat([wp[n] for n in nodes], dim=-1)
 
 
-def fbwp_forward(
+def ptwt_forward_2d(
         signal: torch.Tensor, wavelet: str, max_level: int, orth_method: Literal["qr", "gramschmidt"]
 ) -> torch.Tensor:
-    """Run fbwp forward wavelet packet transform, return leaf-level coefficients."""
+    """Run ptwt forward 2-D wavelet packet transform, return leaf-level coefficients."""
+    wp = ptwt.WaveletPacket2D(
+        data=signal,
+        wavelet=wavelet,
+        mode="boundary",
+        maxlevel=max_level,
+        orthogonalization=orth_method,
+        separable=True,  # must match C++ impl (separable only)
+    )
+    freq_order = wp.get_freq_order(max_level)
+    rows = []
+    for row_nodes in freq_order:
+        rows.append(torch.cat([wp[n] for n in row_nodes], dim=-1))
+    return torch.cat(rows, dim=-2)
+
+
+def fbwp_forward_1d(
+        signal: torch.Tensor, wavelet: str, max_level: int, orth_method: Literal["qr", "gramschmidt"]
+) -> torch.Tensor:
+    """Run fbwp forward 1-D wavelet packet transform, return leaf-level coefficients."""
     coeffs = fbwp.wavelet_packet_forward_1d(
         signal, wavelet, -1, max_level, orth_method
     )
     # coeffs shape: [..., max_level, N] — extract the last level
     return coeffs[..., -1, :]
+
+
+def fbwp_forward_2d(
+        signal: torch.Tensor, wavelet: str, max_level: int, orth_method: Literal["qr", "gramschmidt"]
+) -> torch.Tensor:
+    """Run fbwp forward 2-D wavelet packet transform, return leaf-level coefficients."""
+    coeffs = fbwp.wavelet_packet_forward_2d(
+        signal, wavelet, (-2, -1), max_level, orth_method
+    )
+    # coeffs shape: [..., max_level, H, W] — extract the last level
+    return coeffs[..., -1, :, :]
 
 
 def time_fn(
@@ -83,7 +126,7 @@ def time_fn(
 def main(
     *,
     wavelets: list[str],
-    signal_lengths: list[int],
+    input_shapes: list[tuple[int, ...]],
     batch_size: int,
     dtype: str,
     device: str | None,
@@ -95,14 +138,23 @@ def main(
 ) -> None:
     torch.manual_seed(random_seed)
 
+    ndim = len(input_shapes[0])
+    if ndim == 1:
+        ptwt_fn, fbwp_fn = ptwt_forward_1d, fbwp_forward_1d
+    elif ndim == 2:
+        ptwt_fn, fbwp_fn = ptwt_forward_2d, fbwp_forward_2d
+    else:
+        raise ValueError(f"shapes must be 1-D or 2-D, got {ndim}-D")
+
     torch_dtype = DTYPE_CHOICES[dtype]
     torch_device = torch.device(device if device is not None else ("cuda" if torch.cuda.is_available() else "cpu"))
     rtol, atol = TOLERANCES[torch_dtype]
     sync_cuda = torch_device.type == "cuda"
     total_runs = warmup_runs + timed_runs
+    shape_strs = ["x".join(map(str, s)) for s in input_shapes]
 
     print(f"wavelets:                    {' '.join(wavelets)}")
-    print(f"signal lengths:              {' '.join(map(str, signal_lengths))}")
+    print(f"input shapes:                {' '.join(shape_strs)}")
     print(f"batch size:                  {batch_size}")
     print(f"dtype:                       {dtype}")
     print(f"device:                      {torch_device}")
@@ -112,7 +164,7 @@ def main(
     print()
 
     hdr = (
-        f"{'wavelet':<10} {'length':>8} {'level':>5} "
+        f"{'wavelet':<10} {'shape':>12} {'level':>5} "
         f"{'ptwt mean':>10} {'± std':>10} "
         f"{'fbwp mean':>10} {'± std':>10} "
         f"{'speedup':>8} {'match':>6}"
@@ -124,34 +176,35 @@ def main(
     results: list[dict] = []
 
     for wavelet in wavelets:
-        for length in signal_lengths:
-            dec_len = pywt.Wavelet(wavelet).dec_len
-            max_level = fbwp.compute_max_level(length, dec_len)
+        dec_len = pywt.Wavelet(wavelet).dec_len
+
+        for shape, shape_str in zip(input_shapes, shape_strs):
+            max_level = min(fbwp.compute_max_level(d, dec_len) for d in shape)
             if max_level < 1:
                 continue
 
             signals = [
-                torch.randn(batch_size, length, dtype=torch_dtype, device=torch_device)
+                torch.randn(batch_size, *shape, dtype=torch_dtype, device=torch_device)
                 for _ in range(total_runs)
             ]
 
             ptwt_median, ptwt_mean, ptwt_std = time_fn(
-                ptwt_forward, signals, wavelet, max_level, orth_method,
+                ptwt_fn, signals, wavelet, max_level, orth_method,
                 warmup=warmup_runs, runs=timed_runs, sync_cuda=sync_cuda)
             fbwp_median, fbwp_mean, fbwp_std = time_fn(
-                fbwp_forward, signals, wavelet, max_level, orth_method,
+                fbwp_fn, signals, wavelet, max_level, orth_method,
                 warmup=warmup_runs, runs=timed_runs, sync_cuda=sync_cuda)
 
             check_signal = signals[-1]
-            coefficients_ptwt = ptwt_forward(check_signal, wavelet, max_level, orth_method)
-            coefficients_fbwp = fbwp_forward(check_signal, wavelet, max_level, orth_method)
+            coefficients_ptwt = ptwt_fn(check_signal, wavelet, max_level, orth_method)
+            coefficients_fbwp = fbwp_fn(check_signal, wavelet, max_level, orth_method)
             match = torch.allclose(coefficients_ptwt, coefficients_fbwp, rtol=rtol, atol=atol)
 
             speedup = ptwt_median / fbwp_median if fbwp_median > 0 else float("inf")
 
             results.append({
                 "wavelet": wavelet,
-                "length": length,
+                "input_shape": list(shape),
                 "max_level": max_level,
                 "ptwt": {"median_s": ptwt_median, "mean_s": ptwt_mean, "std_s": ptwt_std},
                 "fbwp": {"median_s": fbwp_median, "mean_s": fbwp_mean, "std_s": fbwp_std},
@@ -160,7 +213,7 @@ def main(
             })
 
             print(
-                f"{wavelet:<10} {length:>8} {max_level:>5} "
+                f"{wavelet:<10} {shape_str:>12} {max_level:>5} "
                 f"{ptwt_mean * 1e3:>9.2f}ms {ptwt_std * 1e3:>9.2f}ms "
                 f"{fbwp_mean * 1e3:>9.2f}ms {fbwp_std * 1e3:>9.2f}ms "
                 f"{speedup:>7.2f}x {'OK' if match else 'FAIL':>5}"
@@ -174,7 +227,7 @@ def main(
         "torch_version": torch.__version__,
         "config": {
             "wavelets": wavelets,
-            "signal_lengths": signal_lengths,
+            "input_shapes": [list(s) for s in input_shapes],
             "batch_size": batch_size,
             "dtype": dtype,
             "device": str(torch_device),
@@ -201,9 +254,8 @@ if __name__ == "__main__":
         help="wavelet names to benchmark (default: haar db2 db3)",
     )
     parser.add_argument(
-        "--signal-lengths", nargs="+", type=int,
-        default=[1024, 2048, 4096, 8192],
-        help="signal lengths to benchmark (default: 1024 .. 8192)",
+        "--input-shapes", nargs="+", type=parse_shape, required=True,
+        help="spatial shapes: N for 1-D (e.g. 1024 2048), HxW for 2-D (e.g. 64x64 128x128)",
     )
     parser.add_argument(
         "--batch-size", type=int, default=1,
@@ -238,4 +290,8 @@ if __name__ == "__main__":
         help="path to save benchmark results as JSON (default: no save)",
     )
 
-    main(**vars(parser.parse_args()))
+    args = parser.parse_args()
+    ndims = set(len(s) for s in args.input_shapes)
+    if len(ndims) > 1:
+        parser.error("all --input-shapes must have the same dimensionality")
+    main(**vars(args))

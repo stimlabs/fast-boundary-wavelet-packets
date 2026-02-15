@@ -30,6 +30,26 @@ def wavelet_packet_inverse_1d(
     """Inverse 1-D wavelet packet transform from leaf-level coefficients."""
     ...
 
+def wavelet_packet_forward_2d(
+    input_signal: torch.Tensor,
+    wavelet_name: str,
+    dims: tuple[int, int] = (-2, -1),
+    max_level: int = -1,
+    orth_method: str = "qr",
+) -> torch.Tensor:
+    """Forward 2-D wavelet packet transform (separable)."""
+    ...
+
+def wavelet_packet_inverse_2d(
+    leaf_coeffs: torch.Tensor,
+    wavelet_name: str,
+    dims: tuple[int, int] = (-2, -1),
+    max_level: int = -1,
+    orth_method: str = "qr",
+) -> torch.Tensor:
+    """Inverse 2-D wavelet packet transform from leaf-level coefficients (separable)."""
+    ...
+
 def compute_max_level(signal_length: int, dec_len: int) -> int:
     """Compute the maximum feasible wavelet packet decomposition level.
 
