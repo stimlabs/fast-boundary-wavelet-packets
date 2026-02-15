@@ -100,6 +100,26 @@ Used only for constructing valid boundary filter rows:
 - `"qr"`: Dense QR factorization. More numerically robust, higher memory.
 - `"gramschmidt"`: Sparse/in-place Gram-Schmidt. More memory efficient, potentially less stable.
 
+### 2-D separable transform
+
+The 2-D wavelet packet transform applies two independent 1-D boundary-filter transforms per level (one along each spatial axis). At level L with k = 2^(L−1) existing subbands per axis, each axis gets `block_diag_repeat(A, k)` so all subbands are split in one sparse `mm`.
+
+**pywt axis convention and frequency ordering.** The reference (ptwt/pywt) uses an unusual coordinate convention: axis 0 = horizontal, axis 1 = vertical. This means:
+
+- The analysis matrix applied along rows (axis 0) controls the *horizontal* frequency.
+- The analysis matrix applied along columns (axis 1) controls the *vertical* frequency.
+- The 2-D frequency grid from `WaveletPacket2D.get_freq_order` indexes subbands as `grid[vert_freq][horiz_freq]`, i.e. vertical frequency selects the *row* in the tiled output and horizontal frequency selects the *column*.
+
+Since the raw separable transform naturally produces subbands tiled as `grid[horiz_freq][vert_freq]` (row index = horizontal, column index = vertical), the frequency ordering requires a **transposition of the subband grid** relative to the raw output. At level 1 this swaps the off-diagonal quadrants (LH ↔ HL):
+
+```
+Raw (natural) order:        Frequency order (pywt):
+[LL | LH]                   [LL | HL]
+[HL | HH]                   [LH | HH]
+```
+
+The general rule is: frequency position `(fr, fc)` reads from raw position `(perm[fc], perm[fr])` — note the swapped indices. This is implemented in `permute_subbands_2d`. The 1-D transform does not have this complication because there is only one spatial axis.
+
 ### Key design differences from reference
 
 - The wavelet packet tree is **not built lazily** — all levels up to `max_level` are computed in one pass.

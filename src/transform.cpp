@@ -3,6 +3,7 @@
 #include "matrix_build.hpp"
 #include "sparse_math.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -206,6 +207,299 @@ torch::Tensor wavelet_packet_inverse_1d(
 
     // Move N dim back to resolved_dim position
     result = torch::movedim(result, -1, resolved_dim);
+
+    return result;
+}
+
+// ========================== 2-D helpers ==========================
+//
+// The 2-D wavelet packet uses a separable approach: two independent 1-D
+// sparse matrix multiplications per level (one along rows, one along cols).
+// This reuses the same boundary-filter matrices as the 1-D transform.
+//
+// A subtlety compared to 1-D: the reference library (ptwt, following pywt)
+// uses axis 0 = horizontal, axis 1 = vertical. This means the frequency-
+// ordered tiling transposes the subband grid relative to the raw separable
+// output. See permute_subbands_2d and CLAUDE.md for details.
+
+/// Apply a sparse [H, H] matrix along the row (height) dimension of [batch, H, W].
+/// Each column's H-dimensional vector is independently transformed by the matrix.
+static torch::Tensor apply_matrix_along_rows(
+    torch::Tensor const& matrix,
+    torch::Tensor const& data) {
+
+    int64_t const batch = data.size(0);
+    int64_t const H = data.size(1);
+    int64_t const W = data.size(2);
+    // Bring H to the leading dim so sparse mm acts on it:
+    // [batch, H, W] → [H, batch, W] → [H, batch*W] → mm → reshape back
+    auto col_major = data.permute({1, 0, 2}).reshape({H, batch * W});
+    auto result = torch::mm(matrix, col_major);
+    return result.reshape({H, batch, W}).permute({1, 0, 2}).contiguous();
+}
+
+/// Apply a sparse [W, W] matrix along the column (width) dimension of [batch, H, W].
+/// Each row's W-dimensional vector is independently transformed by the matrix.
+static torch::Tensor apply_matrix_along_cols(
+    torch::Tensor const& matrix,
+    torch::Tensor const& data) {
+
+    int64_t const batch = data.size(0);
+    int64_t const H = data.size(1);
+    int64_t const W = data.size(2);
+    // Bring W to the leading dim so sparse mm acts on it:
+    // [batch, H, W] → [W, batch, H] → [W, batch*H] → mm → reshape back
+    auto col_major = data.permute({2, 0, 1}).reshape({W, batch * H});
+    auto result = torch::mm(matrix, col_major);
+    return result.reshape({W, batch, H}).permute({1, 2, 0}).contiguous();
+}
+
+/// Permute 2D subbands in a [batch, H, W] tensor from natural to frequency order
+/// (or vice versa, when called with an inverse permutation).
+///
+/// Unlike the 1-D case, the permutation is NOT an independent reordering of
+/// row-blocks and column-blocks. The pywt convention (axis 0 = horizontal,
+/// axis 1 = vertical) means vertical frequency determines the tiled row
+/// position and horizontal frequency determines the tiled column position.
+/// Since the raw separable transform tiles as grid[horiz][vert], the mapping
+/// to the frequency grid[vert][horiz] requires a transposition:
+///
+///   freq(fr, fc) = raw(perm[fc], perm[fr])    ← note swapped indices
+///
+/// At level 1 with identity perm, this swaps the off-diagonal quadrants:
+///   raw [LL|LH; HL|HH] → freq [LL|HL; LH|HH]
+static torch::Tensor permute_subbands_2d(
+    torch::Tensor const& data,
+    int64_t num_subbands,
+    torch::Tensor const& perm) {
+
+    int64_t const H = data.size(1);
+    int64_t const W = data.size(2);
+    int64_t const bh = H / num_subbands;  // height of one subband block
+    int64_t const bw = W / num_subbands;  // width  of one subband block
+
+    auto result = torch::empty_like(data);
+    for (int64_t fr = 0; fr < num_subbands; ++fr) {
+        int64_t const src_col = perm[fr].item<int64_t>();  // vert freq → raw col block
+        for (int64_t fc = 0; fc < num_subbands; ++fc) {
+            int64_t const src_row = perm[fc].item<int64_t>();  // horiz freq → raw row block
+            result.slice(1, fr * bh, (fr + 1) * bh)
+                  .slice(2, fc * bw, (fc + 1) * bw)
+                  .copy_(data.slice(1, src_row * bh, (src_row + 1) * bh)
+                             .slice(2, src_col * bw, (src_col + 1) * bw));
+        }
+    }
+    return result;
+}
+
+static void validate_packet_args_2d(
+    int64_t H, int64_t W,
+    int64_t& max_level,
+    int64_t dec_len) {
+
+    if (max_level == -1) {
+        int64_t const max_h = compute_max_level(H, dec_len);
+        int64_t const max_w = compute_max_level(W, dec_len);
+        max_level = std::min(max_h, max_w);
+        if (max_level < 1) {
+            throw std::invalid_argument(
+                "Cannot auto-compute max_level: signal shape (" +
+                std::to_string(H) + ", " + std::to_string(W) +
+                ") with filter length " + std::to_string(dec_len) +
+                " yields level 0");
+        }
+        return;
+    }
+    if (max_level < 1) {
+        throw std::invalid_argument("max_level must be >= 1, got " + std::to_string(max_level));
+    }
+    int64_t const divisor = 1LL << max_level;
+    if (H % divisor != 0) {
+        throw std::invalid_argument(
+            "Height " + std::to_string(H) +
+            " is not divisible by 2^max_level = " + std::to_string(divisor));
+    }
+    if (W % divisor != 0) {
+        throw std::invalid_argument(
+            "Width " + std::to_string(W) +
+            " is not divisible by 2^max_level = " + std::to_string(divisor));
+    }
+    int64_t const min_subband_h = H / (1LL << (max_level - 1));
+    int64_t const min_subband_w = W / (1LL << (max_level - 1));
+    if (min_subband_h < dec_len) {
+        throw std::invalid_argument(
+            "Row subband size " + std::to_string(min_subband_h) +
+            " at level " + std::to_string(max_level) +
+            " is smaller than filter length " + std::to_string(dec_len));
+    }
+    if (min_subband_w < dec_len) {
+        throw std::invalid_argument(
+            "Column subband size " + std::to_string(min_subband_w) +
+            " at level " + std::to_string(max_level) +
+            " is smaller than filter length " + std::to_string(dec_len));
+    }
+}
+
+// ========================== 2-D transforms ==========================
+
+torch::Tensor wavelet_packet_forward_2d(
+    torch::Tensor const& input_signal,
+    Wavelet const& wavelet,
+    std::array<int64_t, 2> dims,
+    int64_t max_level,
+    OrthMethod orth_method) {
+
+    int64_t const ndim = input_signal.dim();
+    if (ndim < 2) {
+        throw std::invalid_argument("input_signal must have at least 2 dimensions");
+    }
+
+    int64_t const dim_h = resolve_dim(dims[0], ndim);
+    int64_t const dim_w = resolve_dim(dims[1], ndim);
+    if (dim_h == dim_w) {
+        throw std::invalid_argument("dims must refer to two different dimensions");
+    }
+
+    // Move spatial dims to the last two positions → [..., H, W]
+    auto x = torch::movedim(input_signal,
+                            std::vector<int64_t>{dim_h, dim_w},
+                            std::vector<int64_t>{ndim - 2, ndim - 1});
+    auto const orig_shape = x.sizes().vec();
+    int64_t const H = orig_shape[ndim - 2];
+    int64_t const W = orig_shape[ndim - 1];
+
+    validate_packet_args_2d(H, W, max_level, wavelet.dec_len());
+
+    // Flatten leading dims → [batch, H, W]
+    auto flat = x.reshape({-1, H, W});
+    auto const opts = torch::TensorOptions().dtype(flat.dtype()).device(flat.device());
+
+    auto subbands = flat;
+
+    std::vector<torch::Tensor> level_outputs;
+    level_outputs.reserve(max_level);
+
+    for (int64_t level = 1; level <= max_level; ++level) {
+        // At level L each axis has 2^(L-1) subbands of size M from the previous level.
+        int64_t const M_h = H / (1LL << (level - 1));  // subband height before split
+        int64_t const M_w = W / (1LL << (level - 1));  // subband width  before split
+        int64_t const k = 1LL << (level - 1);           // number of subbands per axis
+
+        // Build per-subband analysis matrix, then replicate across all subbands.
+        auto A_col = construct_boundary_a(wavelet, M_w, opts, orth_method);
+        auto A_row = construct_boundary_a(wavelet, M_h, opts, orth_method);
+        if (k > 1) {
+            A_col = block_diag_repeat(A_col, k);
+            A_row = block_diag_repeat(A_row, k);
+        }
+
+        // Separable analysis: transform width then height (order doesn't matter,
+        // the operations commute since they act on different axes).
+        subbands = apply_matrix_along_cols(A_col, subbands);
+        subbands = apply_matrix_along_rows(A_row, subbands);
+
+        // Reorder from natural to frequency order for output.
+        // Note: subbands itself stays in natural order for the next level.
+        int64_t const num_subbands = 1LL << level;
+        auto perm = natural_to_freq_permutation(level);
+        auto freq_ordered = permute_subbands_2d(subbands, num_subbands, perm);
+        level_outputs.push_back(freq_ordered);
+    }
+
+    // Stack levels → [batch, max_level, H, W]
+    auto coeffs = torch::stack(level_outputs, /*dim=*/1);
+
+    // Unflatten batch dims → [..., max_level, H, W]
+    std::vector<int64_t> result_shape(orig_shape.begin(), orig_shape.end() - 2);
+    result_shape.push_back(max_level);
+    result_shape.push_back(H);
+    result_shape.push_back(W);
+    auto result = coeffs.reshape(result_shape);
+
+    // Move [max_level, H, W] back: level at min(dim_h, dim_w),
+    // H and W shift by +1 because the level dim is inserted before them.
+    int64_t const insert_pos = std::min(dim_h, dim_w);
+    result = torch::movedim(result,
+                            std::vector<int64_t>{ndim - 2, ndim - 1, ndim},
+                            std::vector<int64_t>{insert_pos, dim_h + 1, dim_w + 1});
+
+    return result;
+}
+
+torch::Tensor wavelet_packet_inverse_2d(
+    torch::Tensor const& leaf_coeffs,
+    Wavelet const& wavelet,
+    std::array<int64_t, 2> dims,
+    int64_t max_level,
+    OrthMethod orth_method) {
+
+    int64_t const ndim = leaf_coeffs.dim();
+    if (ndim < 2) {
+        throw std::invalid_argument("leaf_coeffs must have at least 2 dimensions");
+    }
+
+    int64_t const dim_h = resolve_dim(dims[0], ndim);
+    int64_t const dim_w = resolve_dim(dims[1], ndim);
+    if (dim_h == dim_w) {
+        throw std::invalid_argument("dims must refer to two different dimensions");
+    }
+
+    // Move spatial dims to last two positions → [..., H, W]
+    auto x = torch::movedim(leaf_coeffs,
+                            std::vector<int64_t>{dim_h, dim_w},
+                            std::vector<int64_t>{ndim - 2, ndim - 1});
+    auto const orig_shape = x.sizes().vec();
+    int64_t const H = orig_shape[ndim - 2];
+    int64_t const W = orig_shape[ndim - 1];
+
+    validate_packet_args_2d(H, W, max_level, wavelet.dec_len());
+
+    // Flatten leading dims → [batch, H, W]
+    auto flat = x.reshape({-1, H, W});
+    auto const opts = torch::TensorOptions().dtype(flat.dtype()).device(flat.device());
+
+    auto subbands = flat;
+
+    // Input is in frequency order; invert the permutation to get natural order.
+    // permute_subbands_2d with inv_perm reverses the transposed Gray-code mapping.
+    {
+        int64_t const num_subbands = 1LL << max_level;
+        auto perm = natural_to_freq_permutation(max_level);
+        auto inv_perm = torch::empty_like(perm);
+        inv_perm.scatter_(0, perm, torch::arange(num_subbands, torch::kLong));
+        subbands = permute_subbands_2d(subbands, num_subbands, inv_perm);
+    }
+
+    // Inverse pass: synthesize from the deepest level back to level 1.
+    for (int64_t level = max_level; level >= 1; --level) {
+        int64_t const M_h = H / (1LL << (level - 1));
+        int64_t const M_w = W / (1LL << (level - 1));
+        int64_t const k = 1LL << (level - 1);
+
+        auto S_col = construct_boundary_s(wavelet, M_w, opts, orth_method);
+        auto S_row = construct_boundary_s(wavelet, M_h, opts, orth_method);
+        if (k > 1) {
+            S_col = block_diag_repeat(S_col, k);
+            S_row = block_diag_repeat(S_row, k);
+        }
+
+        // Separable synthesis: undo the column and row transforms.
+        subbands = apply_matrix_along_cols(S_col, subbands);
+        subbands = apply_matrix_along_rows(S_row, subbands);
+    }
+
+    auto result = subbands;  // [batch, H, W]
+
+    // Unflatten batch dims → [..., H, W]
+    std::vector<int64_t> result_shape(orig_shape.begin(), orig_shape.end() - 2);
+    result_shape.push_back(H);
+    result_shape.push_back(W);
+    result = result.reshape(result_shape);
+
+    // Move H, W back to original positions
+    result = torch::movedim(result,
+                            std::vector<int64_t>{ndim - 2, ndim - 1},
+                            std::vector<int64_t>{dim_h, dim_w});
 
     return result;
 }

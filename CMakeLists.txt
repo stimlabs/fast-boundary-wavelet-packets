@@ -85,3 +85,10 @@ target_include_directories(test_transform_reference PRIVATE tests)
 target_compile_definitions(test_transform_reference PRIVATE
     TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 add_test(NAME test_transform_reference COMMAND test_transform_reference)
+
+add_executable(test_transform_2d_reference tests/test_transform_2d_reference.cpp)
+target_link_libraries(test_transform_2d_reference fbwp)
+target_include_directories(test_transform_2d_reference PRIVATE tests)
+target_compile_definitions(test_transform_2d_reference PRIVATE
+    TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+add_test(NAME test_transform_2d_reference COMMAND test_transform_2d_reference)

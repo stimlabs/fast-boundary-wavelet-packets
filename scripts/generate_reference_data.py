@@ -20,12 +20,22 @@ MATRIX_BUILD_CASES = [
     ("db3", 16),
 ]
 
-WPT_TEST_CASES = [
-    ("1D", "haar", 8, 3),
-    ("1D", "haar", 16, 4),
-    ("1D", "db2", 16, 3),
-    ("1D", "db3", 16, 2),
-    ("1D", "db3", 32, 3),
+WPT_1D_TEST_CASES = [
+    # (wavelet, L, max_level)
+    ("haar", 8, 3),
+    ("haar", 16, 4),
+    ("db2", 16, 3),
+    ("db3", 16, 2),
+    ("db3", 32, 3),
+]
+
+WPT_2D_TEST_CASES = [
+    # (wavelet, H, W, max_level)
+    ("haar", 8, 8, 3),
+    ("haar", 16, 16, 4),
+    ("haar", 16, 8, 3),
+    ("db2", 16, 16, 3),
+    ("db3", 16, 16, 2),
 ]
 
 ORTHOGONALIZATION_METHODS = [("qr", "qr"), ("gramschmidt", "gs")]
@@ -59,9 +69,9 @@ def main():
 
     torch.manual_seed(42)
     print("Wavelet packet transform reference data:")
-    for dimension, wavelet, length, max_level in WPT_TEST_CASES:
+    for wavelet, length, max_level in WPT_1D_TEST_CASES:
         signal = torch.randn(length, dtype=torch.float64)
-        tag = f"wpt_{dimension}_{wavelet}_{length}_L{max_level}"
+        tag = f"wpt_1D_{wavelet}_{length}_L{max_level}"
         save_tensor(signal, DATA_DIR / f"{tag}_signal.pt")
 
         for method_name, method_tag in ORTHOGONALIZATION_METHODS:
@@ -82,7 +92,34 @@ def main():
                 )
                 print(f"  {tag} {method_tag} level {level}: {list(tiled.shape)} ({len(nodes)} nodes)")
 
-    print("Done.")
+    print("2D wavelet packet transform reference data:")
+    for wavelet, H, W, max_level in WPT_2D_TEST_CASES:
+        signal = torch.randn(H, W, dtype=torch.float64)
+        tag = f"wpt_2D_{wavelet}_{H}x{W}_L{max_level}"
+        save_tensor(signal, DATA_DIR / f"{tag}_signal.pt")
+
+        for method_name, method_tag in ORTHOGONALIZATION_METHODS:
+            wp = ptwt.WaveletPacket2D(
+                data=signal.unsqueeze(0),  # ptwt expects [batch, H, W]
+                wavelet=wavelet,
+                mode="boundary",
+                maxlevel=max_level,
+                orthogonalization=method_name,
+                separable=True,  # must match our C++ impl (separable only)
+            )
+            for level in range(1, max_level + 1):
+                freq_grid = wp.get_level(level, order="freq")  # returns list[list[str]] (rows × cols)
+                rows = []
+                for row_nodes in freq_grid:
+                    cols = [wp[node].squeeze(0) for node in row_nodes]
+                    rows.append(torch.cat(cols, dim=-1))
+                tiled = torch.cat(rows, dim=-2)
+                save_tensor(
+                    tiled,
+                    DATA_DIR / f"{tag}_{method_tag}_l{level}.pt",
+                )
+                print(f"  {tag} {method_tag} level {level}: {list(tiled.shape)} "
+                      f"({len(freq_grid)}x{len(freq_grid[0])} subbands)")
 
 
 if __name__ == "__main__":

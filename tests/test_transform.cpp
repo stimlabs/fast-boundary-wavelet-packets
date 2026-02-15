@@ -397,6 +397,186 @@ static void test_natural_to_freq_level3() {
     std::cout << "  test_natural_to_freq_level3 passed." << std::endl;
 }
 
+// ========================== 2-D tests ==========================
+
+static void test_shapes_2d() {
+    int64_t const H = 16, W = 16, L = 3;
+
+    // Unbatched: [H, W] → [L, H, W]
+    {
+        auto signal = torch::randn({H, W}, torch::kFloat64);
+        auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"), {-2, -1}, L);
+        assert(fwd.dim() == 3);
+        assert(fwd.size(0) == L);
+        assert(fwd.size(1) == H);
+        assert(fwd.size(2) == W);
+
+        auto leaf = fwd.select(0, L - 1);
+        auto rec = wavelet_packet_inverse_2d(leaf, make_wavelet("haar"), {-2, -1}, L);
+        assert(rec.dim() == 2);
+        assert(rec.size(0) == H);
+        assert(rec.size(1) == W);
+    }
+
+    // Batched: [B, H, W] → [B, L, H, W]
+    {
+        int64_t const B = 3;
+        auto signal = torch::randn({B, H, W}, torch::kFloat64);
+        auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"), {-2, -1}, L);
+        assert(fwd.dim() == 4);
+        assert(fwd.size(0) == B);
+        assert(fwd.size(1) == L);
+        assert(fwd.size(2) == H);
+        assert(fwd.size(3) == W);
+
+        auto leaf = fwd.select(1, L - 1);
+        auto rec = wavelet_packet_inverse_2d(leaf, make_wavelet("haar"), {-2, -1}, L);
+        assert(rec.dim() == 3);
+        assert(rec.size(0) == B);
+        assert(rec.size(1) == H);
+        assert(rec.size(2) == W);
+    }
+
+    // Multi-batch: [B1, B2, H, W] → [B1, B2, L, H, W]
+    {
+        int64_t const B1 = 2, B2 = 3;
+        auto signal = torch::randn({B1, B2, H, W}, torch::kFloat64);
+        auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"), {-2, -1}, L);
+        assert(fwd.dim() == 5);
+        assert(fwd.size(0) == B1);
+        assert(fwd.size(1) == B2);
+        assert(fwd.size(2) == L);
+        assert(fwd.size(3) == H);
+        assert(fwd.size(4) == W);
+    }
+
+    std::cout << "  test_shapes_2d passed." << std::endl;
+}
+
+static void test_shapes_2d_rectangular() {
+    int64_t const H = 16, W = 8, L = 2;
+
+    auto signal = torch::randn({H, W}, torch::kFloat64);
+    auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"), {-2, -1}, L);
+    assert(fwd.dim() == 3);
+    assert(fwd.size(0) == L);
+    assert(fwd.size(1) == H);
+    assert(fwd.size(2) == W);
+
+    std::cout << "  test_shapes_2d_rectangular passed." << std::endl;
+}
+
+static void test_perfect_reconstruction_2d(
+    Wavelet const& wavelet,
+    int64_t H, int64_t W,
+    int64_t max_level,
+    OrthMethod method,
+    std::string const& label) {
+
+    auto signal = torch::randn({H, W}, torch::kFloat64);
+
+    auto fwd = wavelet_packet_forward_2d(signal, wavelet, {-2, -1}, max_level, method);
+    auto leaf = fwd.select(0, max_level - 1);
+    auto reconstructed = wavelet_packet_inverse_2d(leaf, wavelet, {-2, -1}, max_level, method);
+
+    auto diff = (reconstructed - signal).abs().max().item<double>();
+    if (diff > TOL) {
+        std::cerr << "FAIL 2D perfect reconstruction " << label
+                  << " max diff = " << diff << std::endl;
+        assert(false);
+    }
+    std::cout << "  2D perfect_reconstruction " << label
+              << " OK (diff=" << diff << ")" << std::endl;
+}
+
+static void test_perfect_reconstruction_2d_batch() {
+    auto signal = torch::randn({3, 16, 16}, torch::kFloat64);
+
+    auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("db2"), {-2, -1}, 2);
+    auto leaf = fwd.select(1, 1);
+    auto reconstructed = wavelet_packet_inverse_2d(leaf, make_wavelet("db2"), {-2, -1}, 2);
+
+    assert(reconstructed.sizes() == signal.sizes());
+    auto diff = (reconstructed - signal).abs().max().item<double>();
+    if (diff > TOL) {
+        std::cerr << "FAIL 2D batch reconstruction max diff = " << diff << std::endl;
+        assert(false);
+    }
+    std::cout << "  test_perfect_reconstruction_2d_batch passed. (diff=" << diff << ")" << std::endl;
+}
+
+static void test_energy_preservation_2d() {
+    auto signal = torch::randn({16, 16}, torch::kFloat64);
+    double const signal_energy = signal.norm().item<double>();
+
+    int64_t const L = 3;
+    auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"), {-2, -1}, L);
+    for (int64_t l = 0; l < L; ++l) {
+        auto level_coeffs = fwd.select(0, l);
+        double const coeff_energy = level_coeffs.norm().item<double>();
+        double const rel_diff = std::abs(coeff_energy - signal_energy) / signal_energy;
+        if (rel_diff > TOL) {
+            std::cerr << "FAIL 2D energy preservation at level " << (l + 1)
+                      << " rel_diff = " << rel_diff << std::endl;
+            assert(false);
+        }
+    }
+    std::cout << "  test_energy_preservation_2d passed." << std::endl;
+}
+
+static void test_auto_max_level_2d() {
+    // haar, 16x16: max_level = min(4, 4) = 4
+    {
+        auto signal = torch::randn({16, 16}, torch::kFloat64);
+        auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"));
+        assert(fwd.size(0) == 4);  // max_level
+    }
+    // haar, 16x8: max_level = min(4, 3) = 3
+    {
+        auto signal = torch::randn({16, 8}, torch::kFloat64);
+        auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"));
+        assert(fwd.size(0) == 3);
+    }
+    // db2 (dec_len=4), 16x16: max_level = min(3, 3) = 3
+    {
+        auto signal = torch::randn({16, 16}, torch::kFloat64);
+        auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("db2"));
+        assert(fwd.size(0) == 3);
+    }
+    std::cout << "  test_auto_max_level_2d passed." << std::endl;
+}
+
+static void test_dim_selection_2d_nondefault() {
+    // [H, W, C] with dims=(0, 1): transform first two dims
+    int64_t const H = 16, W = 16, C = 3, L = 2;
+
+    auto signal = torch::randn({H, W, C}, torch::kFloat64);
+    auto fwd = wavelet_packet_forward_2d(signal, make_wavelet("haar"), {0, 1}, L);
+    assert(fwd.dim() == 4);
+    assert(fwd.size(0) == L);
+    assert(fwd.size(1) == H);
+    assert(fwd.size(2) == W);
+    assert(fwd.size(3) == C);
+
+    // Each channel should give same result as independent 2D transform
+    for (int64_t c = 0; c < C; ++c) {
+        auto signal_c = signal.select(2, c);  // [H, W]
+        auto fwd_c = wavelet_packet_forward_2d(signal_c, make_wavelet("haar"), {-2, -1}, L);
+        auto fwd_slice = fwd.select(3, c);  // [L, H, W]
+        auto diff = (fwd_slice - fwd_c).abs().max().item<double>();
+        assert(diff < TOL);
+    }
+
+    // Roundtrip
+    auto leaf = fwd.select(0, L - 1);  // [H, W, C]
+    auto rec = wavelet_packet_inverse_2d(leaf, make_wavelet("haar"), {0, 1}, L);
+    assert(rec.sizes() == signal.sizes());
+    auto diff = (rec - signal).abs().max().item<double>();
+    assert(diff < TOL);
+
+    std::cout << "  test_dim_selection_2d_nondefault passed." << std::endl;
+}
+
 int main() {
     std::cout << "block_diag_repeat tests:" << std::endl;
     test_block_diag_repeat_identity();
@@ -456,6 +636,46 @@ int main() {
     test_natural_to_freq_level1();
     test_natural_to_freq_level2();
     test_natural_to_freq_level3();
+
+    std::cout << "2D output shape tests:" << std::endl;
+    test_shapes_2d();
+    test_shapes_2d_rectangular();
+
+    std::cout << "2D auto max_level tests:" << std::endl;
+    test_auto_max_level_2d();
+
+    std::cout << "2D dim selection tests:" << std::endl;
+    test_dim_selection_2d_nondefault();
+
+    std::cout << "2D perfect reconstruction tests:" << std::endl;
+    struct ReconCase2D {
+        std::string wavelet_name;
+        int64_t H, W;
+        int64_t max_level;
+    };
+    std::vector<ReconCase2D> const recon_cases_2d = {
+        {"haar", 8, 8, 3},
+        {"haar", 16, 16, 4},
+        {"haar", 16, 8, 3},
+        {"db2", 16, 16, 2},
+        {"db2", 16, 16, 3},
+        {"db3", 16, 16, 2},
+        {"db3", 32, 32, 3},
+    };
+    for (auto const& rc : recon_cases_2d) {
+        auto const w = make_wavelet(rc.wavelet_name);
+        for (auto method : {OrthMethod::qr, OrthMethod::gramschmidt}) {
+            std::string const method_tag = (method == OrthMethod::qr) ? "qr" : "gs";
+            std::string const label = rc.wavelet_name + " " + std::to_string(rc.H) + "x" +
+                std::to_string(rc.W) + " L=" + std::to_string(rc.max_level) + " " + method_tag;
+            test_perfect_reconstruction_2d(w, rc.H, rc.W, rc.max_level, method, label);
+        }
+    }
+
+    test_perfect_reconstruction_2d_batch();
+
+    std::cout << "2D energy preservation tests:" << std::endl;
+    test_energy_preservation_2d();
 
     std::cout << "All transform tests passed." << std::endl;
     return 0;

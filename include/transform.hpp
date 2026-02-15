@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <torch/torch.h>
 
 #include "orthogonalize.hpp"
@@ -26,6 +28,25 @@ torch::Tensor wavelet_packet_inverse_1d(
     torch::Tensor const& leaf_coeffs,
     Wavelet const& wavelet,
     int64_t dim = -1,
+    int64_t max_level = -1,
+    OrthMethod orth_method = OrthMethod::qr);
+
+/// Forward 2-D wavelet packet transform (separable).
+/// Returns tensor with a new max_level dimension inserted before the spatial dims.
+/// Example: input [batch, H, W] with dims=(-2,-1) → [batch, max_level, H, W].
+torch::Tensor wavelet_packet_forward_2d(
+    torch::Tensor const& input_signal,
+    Wavelet const& wavelet,
+    std::array<int64_t, 2> dims = {-2, -1},
+    int64_t max_level = -1,
+    OrthMethod orth_method = OrthMethod::qr);
+
+/// Inverse 2-D wavelet packet transform from leaf-level coefficients (separable).
+/// leaf_coeffs has the same spatial shape [H, W] as the input.
+torch::Tensor wavelet_packet_inverse_2d(
+    torch::Tensor const& leaf_coeffs,
+    Wavelet const& wavelet,
+    std::array<int64_t, 2> dims = {-2, -1},
     int64_t max_level = -1,
     OrthMethod orth_method = OrthMethod::qr);
 
