@@ -22,6 +22,8 @@ torch::Tensor construct_s(
     int64_t length,
     torch::TensorOptions const& opts) {
 
+    // Reconstruction filters are time-reversed (flipped) relative to their
+    // stored form to produce the correct synthesis convolution matrix.
     auto rec_lo = torch::tensor(wavelet.rec_lo, opts).flip(0);
     auto rec_hi = torch::tensor(wavelet.rec_hi, opts).flip(0);
 
@@ -37,8 +39,8 @@ torch::Tensor construct_boundary_a(
     torch::TensorOptions const& opts,
     OrthMethod method) {
 
-    auto a = construct_a(wavelet, length, opts);
-    return orthogonalize(a, wavelet.dec_len(), method);
+    auto analysis = construct_a(wavelet, length, opts);
+    return orthogonalize(analysis, wavelet.dec_len(), method);
 }
 
 torch::Tensor construct_boundary_s(
@@ -47,8 +49,10 @@ torch::Tensor construct_boundary_s(
     torch::TensorOptions const& opts,
     OrthMethod method) {
 
-    auto s = construct_s(wavelet, length, opts);
-    auto st = s.t();
-    st = orthogonalize(st, wavelet.rec_len(), method);
-    return st.t();
+    auto synthesis = construct_s(wavelet, length, opts);
+    // S is orthogonalized in transposed form because orthogonalize() operates
+    // on rows, and the boundary structure of S appears in its columns.
+    auto synthesis_transposed = synthesis.t();
+    synthesis_transposed = orthogonalize(synthesis_transposed, wavelet.rec_len(), method);
+    return synthesis_transposed.t();
 }

@@ -3,6 +3,10 @@
 #include <cmath>
 #include <stdexcept>
 
+// Daubechies wavelet filter coefficients from the standard orthogonal wavelet
+// tables (matching pywt). The decomposition and reconstruction filters are
+// related by the alternating flip (QMF) relationship.
+
 static Wavelet make_haar() {
     double const s = std::sqrt(2.0) / 2.0;
     return Wavelet{

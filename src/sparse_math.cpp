@@ -1,8 +1,6 @@
 #include "sparse_math.hpp"
 
-static torch::TensorOptions sparse_opts(torch::Tensor const& t) {
-    return torch::TensorOptions().dtype(t.dtype()).device(t.device());
-}
+#include "tensor_util.hpp"
 
 torch::Tensor construct_conv_matrix(
     torch::Tensor const& filter,
@@ -10,6 +8,10 @@ torch::Tensor construct_conv_matrix(
 
     int64_t const filter_len = filter.size(0);
     int64_t const filter_offset = filter_len % 2;
+
+    // Sameshift centering: the filter is placed so that the center tap aligns
+    // with the diagonal. start_row/stop_row define the valid row range after
+    // discarding positions that would extend beyond the signal boundaries.
     int64_t const start_row = filter_len / 2 - 1 + filter_offset;
     int64_t const stop_row = start_row + input_length - 1;
 
@@ -28,7 +30,7 @@ torch::Tensor construct_conv_matrix(
         }
     }
 
-    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(filter.device());
+    auto const long_opts = long_opts_like(filter);
     auto row_idx = torch::tensor(rows, long_opts);
     auto col_idx = torch::tensor(cols, long_opts);
     auto indices = torch::stack({row_idx, col_idx});
@@ -46,8 +48,10 @@ torch::Tensor construct_strided_conv_matrix(
 
     auto conv_matrix = construct_conv_matrix(filter, input_length);
 
-    // sameshift: select rows starting at 1 with given stride
-    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(filter.device());
+    // Build a selection matrix that picks rows 1, 1+stride, 1+2*stride, ...
+    // from the full convolution matrix. This implements the sameshift downsampling:
+    // row 1 is the first valid center-aligned output position.
+    auto const long_opts = long_opts_like(filter);
     auto select_rows = torch::arange(1, conv_matrix.size(0), stride, long_opts);
     int64_t const n_selected = select_rows.size(0);
 
@@ -69,16 +73,16 @@ torch::Tensor sparse_replace_row(
     int64_t row_index,
     torch::Tensor const& row) {
 
-    int64_t const n = matrix.size(0);
+    int64_t const num_rows = matrix.size(0);
     auto const opts = sparse_opts(matrix);
-    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(matrix.device());
+    auto const long_opts = long_opts_like(matrix);
 
     // Diagonal removal matrix: identity with 0 at row_index.
-    auto diag_idx = torch::arange(n, long_opts);
-    auto diag_vals = torch::ones(n, opts);
+    auto diag_idx = torch::arange(num_rows, long_opts);
+    auto diag_vals = torch::ones(num_rows, opts);
     diag_vals[row_index] = 0.0;
     auto removal = torch::sparse_coo_tensor(
-        torch::stack({diag_idx, diag_idx}), diag_vals, {n, n}, opts);
+        torch::stack({diag_idx, diag_idx}), diag_vals, {num_rows, num_rows}, opts);
 
     auto result = torch::mm(removal, matrix);
 
@@ -99,14 +103,15 @@ torch::Tensor block_diag_repeat(
     int64_t count) {
 
     auto block_c = block.coalesce();
-    int64_t const M = block_c.size(0);
+    int64_t const block_size = block_c.size(0);
     auto src_indices = block_c.indices();   // [2, nnz]
     auto src_values = block_c.values();     // [nnz]
     int64_t const nnz = src_values.size(0);
 
-    auto const long_opts = torch::TensorOptions().dtype(torch::kLong).device(block.device());
+    auto const long_opts = long_opts_like(block);
 
     // Pre-allocate index/value tensors for all copies at once.
+    // Each copy's indices are offset by i * block_size along both row and col axes.
     auto all_rows = torch::empty(nnz * count, long_opts);
     auto all_cols = torch::empty(nnz * count, long_opts);
     auto all_vals = torch::empty(nnz * count, sparse_opts(block));
@@ -116,13 +121,13 @@ torch::Tensor block_diag_repeat(
 
     for (int64_t i = 0; i < count; ++i) {
         int64_t const offset = i * nnz;
-        int64_t const block_offset = i * M;
+        int64_t const block_offset = i * block_size;
         all_rows.slice(0, offset, offset + nnz).copy_(src_rows + block_offset);
         all_cols.slice(0, offset, offset + nnz).copy_(src_cols + block_offset);
         all_vals.slice(0, offset, offset + nnz).copy_(src_values);
     }
 
-    int64_t const N = M * count;
+    int64_t const total_size = block_size * count;
     return torch::sparse_coo_tensor(
-        torch::stack({all_rows, all_cols}), all_vals, {N, N}, sparse_opts(block));
+        torch::stack({all_rows, all_cols}), all_vals, {total_size, total_size}, sparse_opts(block));
 }
